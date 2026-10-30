@@ -17,6 +17,8 @@ import {
   SIDECAR_SOURCES,
   SIDECAR_STAMP_FIELDS,
   SIDECAR_STAMP_FLAGS,
+  SIDECAR_PORTS,
+  isWindowsNamedPipePath,
   type DaemonStatusSnapshot,
   type WebStatusSnapshot,
   type DesktopStatusSnapshot,
@@ -87,7 +89,8 @@ export interface SidecarRestartResult {
 }
 
 export interface SidecarClientOptions {
-  ipcPath: string;
+  /** Directory holding `<app>.sock` entries (or a Windows named-pipe root). */
+  ipcBase: string;
   timeoutMs?: number;
 }
 
@@ -117,10 +120,20 @@ export function stampToEnv(stamp: SidecarStamp): Record<string, string> {
   return {
     [SIDECAR_ENV.BASE]: getSidecarBase(stamp),
     [SIDECAR_ENV.IPC_BASE]: stamp.ipc,
-    [SIDECAR_ENV.IPC_PATH]: path.join(stamp.ipc, `${stamp.app}.sock`),
+    [SIDECAR_ENV.IPC_PATH]: resolveIpcSocketPath(stamp),
     [SIDECAR_ENV.NAMESPACE]: stamp.namespace,
     [SIDECAR_ENV.SOURCE]: stamp.source,
   };
+}
+
+/**
+ * Socket path for one app. `stamp.ipc` is a *directory* on POSIX and a pipe
+ * prefix on Windows. `invokeSidecar` used to connect to the directory itself,
+ * so every IPC call failed with ENOENT before reaching a server.
+ */
+export function resolveIpcSocketPath(stamp: SidecarStamp): string {
+  if (isWindowsNamedPipePath(stamp.ipc)) return `${stamp.ipc}-${stamp.app}`;
+  return path.join(stamp.ipc, `${stamp.app}.sock`);
 }
 
 export function stampKey(stamp: SidecarStamp): string {
@@ -366,18 +379,29 @@ export async function invokeSidecar<T>(
   input: unknown,
   options?: { timeoutMs?: number },
 ): Promise<T> {
-  const ipcPath = stamp.ipc;
+  return invokeSocket<T>(resolveIpcSocketPath(stamp), { type, input, stamp }, options?.timeoutMs ?? 5000);
+}
+
+/**
+ * Transport primitive: write one JSON request, read one JSON reply. Used both by
+ * `invokeSidecar` (path derived from a stamp) and by `SidecarClient` (path fixed
+ * by an inherited `OD_SIDECAR_IPC_BASE`).
+ */
+export function invokeSocket<T>(
+  ipcPath: string,
+  payload: unknown,
+  timeoutMs = 5000,
+): Promise<T> {
   return new Promise((resolve, reject) => {
     const client = net.createConnection(ipcPath, () => {
-      const message = JSON.stringify({ type, input, stamp });
-      client.write(message);
+      client.write(JSON.stringify(payload));
       client.end();
     });
 
     const timeout = setTimeout(() => {
       client.destroy();
-      reject(new Error(`IPC timeout: ${type}`));
-    }, options?.timeoutMs ?? 5000);
+      reject(new Error(`IPC timeout: ${ipcPath}`));
+    }, timeoutMs);
 
     let data = '';
     client.on('data', (chunk) => {
@@ -401,20 +425,26 @@ export async function invokeSidecar<T>(
 // ── SidecarClient ──────────────────────────────────────────────────────────
 
 export class SidecarClient {
-  private ipcPath: string;
+  private ipcBase: string;
   private timeoutMs: number;
 
   constructor(options: SidecarClientOptions) {
-    this.ipcPath = options.ipcPath;
+    this.ipcBase = options.ipcBase;
     this.timeoutMs = options.timeoutMs ?? 5000;
   }
 
+  sockPath(appKey: string): string {
+    const stamp = normalizeSidecarStamp({ app: appKey as AppKey, ipc: this.ipcBase });
+    return resolveIpcSocketPath(stamp);
+  }
+
   async status<T>(appKey: string, opts?: { timeoutMs?: number }): Promise<T | null> {
-    const stamp = normalizeSidecarStamp({ app: appKey as AppKey });
     try {
-      return await invokeSidecar<T>(stamp, SIDECAR_MESSAGES.STATUS, undefined, {
-        timeoutMs: opts?.timeoutMs ?? this.timeoutMs,
-      });
+      return await invokeSocket<T>(
+        this.sockPath(appKey),
+        { type: SIDECAR_MESSAGES.STATUS },
+        opts?.timeoutMs ?? this.timeoutMs,
+      );
     } catch {
       return null;
     }
@@ -423,9 +453,13 @@ export class SidecarClient {
   static connectInherited(
     env: Record<string, string | undefined>,
   ): SidecarClient | null {
+    // IPC_PATH points at one app's socket; the client needs the shared base so it
+    // can reach any sibling app (daemon/web/desktop) in the same namespace.
+    const ipcBase = env[SIDECAR_ENV.IPC_BASE];
+    if (ipcBase) return new SidecarClient({ ipcBase });
     const ipcPath = env[SIDECAR_ENV.IPC_PATH];
     if (!ipcPath) return null;
-    return new SidecarClient({ ipcPath });
+    return new SidecarClient({ ipcBase: path.dirname(ipcPath) });
   }
 }
 
@@ -449,21 +483,33 @@ export function resolveLogFilePath(stamp: SidecarStamp): string {
 
 // ── Port allocation ────────────────────────────────────────────────────────
 
-const BASE_PORT = 7456;
 const portAllocations = new Map<string, number>();
 
 export function allocatePort(request: { app: AppKey; offset?: number }): number {
   const key = request.app;
-  if (portAllocations.has(key)) return portAllocations.get(key)!;
-  const offset = request.offset ?? 0;
-  const ports: Record<string, number> = {
-    [APP_KEYS.DAEMON]: BASE_PORT + offset,
-    [APP_KEYS.WEB]: BASE_PORT + 1 + offset,
-    [APP_KEYS.DESKTOP]: BASE_PORT + 2 + offset,
-  };
-  const port = ports[request.app] ?? BASE_PORT + offset;
+  const cached = portAllocations.get(key);
+  if (cached != null) return cached;
+  const base = SIDECAR_PORTS[request.app] ?? SIDECAR_PORTS.base;
+  const port = base + (request.offset ?? 0);
   portAllocations.set(key, port);
   return port;
+}
+
+/**
+ * True when nothing is listening on `port` for loopback. Used by tools-dev to
+ * fail fast instead of letting Next silently bind port+1.
+ */
+export function isPortFree(port: number, host = SIDECAR_DEFAULTS.host): Promise<boolean> {
+  return new Promise((resolve) => {
+    const probe = net.createServer();
+    const settle = (free: boolean): void => {
+      probe.removeAllListeners();
+      resolve(free);
+    };
+    probe.once('error', () => settle(false));
+    probe.once('listening', () => probe.close(() => settle(true)));
+    probe.listen(port, host);
+  });
 }
 
 // ── SidecarFactory (backward compat) ───────────────────────────────────────

@@ -43,6 +43,10 @@ export const SIDECAR_ENV = Object.freeze({
   TOOLS_DEV_PARENT_PID: "OD_TOOLS_DEV_PARENT_PID",
   WEB_DIST_DIR: "OD_WEB_DIST_DIR",
   WEB_PORT: "OD_WEB_PORT",
+  // Loopback origin the daemon should trust for browser traffic (comma-separated
+  // for multi-port runs). tools-dev injects it at spawn time; the daemon can also
+  // be told over IPC via REGISTER_WEB_URL.
+  WEB_ORIGIN: "OD_WEB_ORIGIN",
   WEB_TSCONFIG_PATH: "OD_WEB_TSCONFIG_PATH",
 } as const);
 
@@ -69,6 +73,20 @@ export const STAMP_NAMESPACE_FLAG = SIDECAR_STAMP_FLAGS.namespace;
 export const STAMP_SOURCE_FLAG = SIDECAR_STAMP_FLAGS.source;
 
 export const SIDECAR_STAMP_FIELDS = ["app", "mode", "namespace", "ipc", "source"] as const;
+
+/**
+ * Canonical loopback ports for a single runtime namespace. Every consumer
+ * (tools-dev, sidecar allocation, desktop fallbacks, e2e harness) must derive
+ * from this table instead of hardcoding a number — a drifted literal is what
+ * makes a port collision silently move the web server and strand Electron.
+ */
+export const SIDECAR_PORTS = Object.freeze({
+  base: 7456,
+  daemon: 7456,
+  web: 7457,
+  /** Reserved for future use; the desktop shell itself never listens on HTTP. */
+  desktop: 7458,
+} as const);
 
 export const SIDECAR_DEFAULTS = Object.freeze({
   host: "127.0.0.1",

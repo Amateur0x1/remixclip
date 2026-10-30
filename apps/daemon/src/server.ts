@@ -18,6 +18,7 @@ import { registerLibraryRoutes } from './routes/library.js';
 import { openDatabase, getDefaultDbPath } from './db.js';
 import { initAppConfig } from './app-config.js';
 import { RunManager } from './runtimes/runs.js';
+import { isRegisteredWebOrigin, listWebOrigins, seedWebOriginsFromEnv } from './web-origins.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -46,7 +47,7 @@ export function createRemixclipApp(
     if (origin) {
       if (origin.startsWith('chrome-extension://') || origin.startsWith('moz-extension://')) {
         if (!req.path.startsWith('/api/library')) {
-          res.status(403).json({ error: '扩展只能访问素材库接口' });
+          res.status(403).json({ error: 'extensions may only access the library API' });
           return;
         }
         res.setHeader('Access-Control-Allow-Origin', origin);
@@ -58,12 +59,25 @@ export function createRemixclipApp(
         return;
       }
       let url: URL;
-      try { url = new URL(origin); } catch { res.status(403).json({ error: '非法请求来源' }); return; }
+      try { url = new URL(origin); } catch { res.status(403).json({ error: 'invalid request origin' }); return; }
       const host = req.hostname;
-      if (url.protocol !== 'http:' || !['127.0.0.1', 'localhost'].includes(url.hostname) ||
-          !['127.0.0.1', 'localhost'].includes(host) ||
-          ![String(req.socket.localPort), '7457'].includes(url.port)) {
-        res.status(403).json({ error: '不允许跨站访问本地服务' });
+      const loopback = (value: string) => value === '127.0.0.1' || value === 'localhost';
+      if (url.protocol !== 'http:' || !loopback(url.hostname) || !loopback(host)) {
+        res.status(403).json({ error: 'cross-origin access to the local service is not allowed' });
+        return;
+      }
+      // Two ways to be trusted: same origin as this daemon (packaged UI), or an
+      // origin the launcher registered (dev server on its own port). No port is
+      // hardcoded — see apps/daemon/src/web-origins.ts.
+      const sameOrigin = url.port === String(req.socket.localPort);
+      if (!sameOrigin && !isRegisteredWebOrigin(url.origin)) {
+        const known = listWebOrigins();
+        res.status(403).json({
+          error: 'cross-origin access to the local service is not allowed',
+          hint: known.length > 0
+            ? `registered web origins: ${known.join(', ')}; align the web port with one of them (pnpm tools-dev start does this automatically)`
+            : 'no web origin is registered yet; start via pnpm tools-dev start, or set OD_WEB_ORIGIN',
+        });
         return;
       }
       res.setHeader('Access-Control-Allow-Origin', origin);
@@ -167,6 +181,12 @@ export async function startRemixclipServer(options: RemixclipServeOptions): Prom
 
   // Initialize app config store
   initAppConfig(dataDir);
+  // Trust the launcher-declared web origin before the first request arrives; the
+  // web sidecar can also register itself later over IPC (REGISTER_WEB_URL).
+  const seededOrigins = seedWebOriginsFromEnv();
+  if (seededOrigins.length > 0) {
+    console.log(`[remixclip] trusting web origins: ${seededOrigins.join(', ')}`);
+  }
   // Startup precheck: make sure the workspaces directory exists.
   const workspacesDir = path.join(dataDir, 'workspaces');
   if (!existsSync(workspacesDir)) {

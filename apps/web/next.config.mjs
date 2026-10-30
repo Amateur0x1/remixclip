@@ -8,7 +8,13 @@ const nextConfig = {
   output: 'export',
   trailingSlash: true,
   images: { unoptimized: true },
-  allowedDevOrigins: ['127.0.0.1'],
+  // Next 16 locks one dev server per distDir; making distDir injectable lets a second
+  // isolated instance run for verification without disturbing the one already running.
+  distDir: process.env.NEXT_DIST_DIR || '.next',
+  // `next dev` takes its port from the injected PORT (decided by tools-dev, see
+  // tools/dev/src/index.ts). Only allowed dev hostnames are declared here: Next matches
+  // on hostname, not port, so a port change never requires touching this file.
+  allowedDevOrigins: ['127.0.0.1', 'localhost'],
   // Turbopack resolves `next` from apps/web through the pnpm symlink into
   // <repo>/node_modules/.pnpm/..., which lives outside apps/web. Pinning the root to the
   // pnpm workspace root keeps that realpath inside the project and lets dev boot.

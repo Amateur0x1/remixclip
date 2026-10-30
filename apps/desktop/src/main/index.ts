@@ -19,12 +19,22 @@ import path from 'node:path';
 const RESOURCES_PATH: string | undefined = (process as unknown as { resourcesPath?: string })
   .resourcesPath;
 
+// Ports are owned by the launcher: tools-dev injects OD_PORT + OD_WEB_PORT
+// (and REMIXCLIP_WEB_DEV_URL) at spawn time, and the packaged shell passes
+// --port to the daemon it spawns itself. The constants below are only the last
+// resort for launching Electron by hand, outside of tools-dev.
+const FALLBACK_DAEMON_PORT = 7456;
+const FALLBACK_WEB_DEV_PORT = 7457;
+
 const daemonPort = parseInt(
-  process.env.OD_PORT || process.env.REMIXCLIP_DAEMON_PORT || '7456',
+  process.env.OD_PORT || process.env.REMIXCLIP_DAEMON_PORT || String(FALLBACK_DAEMON_PORT),
   10,
 );
 const daemonUrl = `http://127.0.0.1:${daemonPort}`;
-const devWebUrl = process.env.REMIXCLIP_WEB_DEV_URL || 'http://127.0.0.1:7457';
+const webPort = parseInt(process.env.OD_WEB_PORT ?? '', 10);
+const devWebUrl =
+  process.env.REMIXCLIP_WEB_DEV_URL ||
+  `http://127.0.0.1:${Number.isFinite(webPort) ? webPort : FALLBACK_WEB_DEV_PORT}`;
 const targetUrl = app.isPackaged ? daemonUrl : devWebUrl;
 
 let daemonChild: ChildProcess | null = null;

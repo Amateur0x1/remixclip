@@ -185,6 +185,9 @@ importers:
       '@remixclip/contracts':
         specifier: workspace:*
         version: link:../packages/contracts
+      '@remixclip/sidecar-proto':
+        specifier: workspace:*
+        version: link:../packages/sidecar-proto
       '@types/node':
         specifier: 20.19.39
         version: 20.19.39

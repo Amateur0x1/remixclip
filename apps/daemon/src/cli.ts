@@ -4,6 +4,7 @@ import { cac } from 'cac';
 import { startRemixclipServer, type RemixclipServeOptions } from './server.js';
 import { openDatabase, getDefaultDbPath } from './db.js';
 import { resolveDaemonUrl, DEFAULT_DAEMON_URL } from './daemon-url.js';
+import { startDaemonIpc } from './sidecar-ipc.js';
 import { SIDECAR_ENV } from '@remixclip/sidecar-proto';
 
 const cli = cac('remixclip');
@@ -20,11 +21,11 @@ cli
   .option('--data-dir <dir>', 'Data dir for db/config/artifacts (defaults to OD_DATA_DIR)')
   // Sidecar stamp flags (passed through argv by tools-dev at startup, declared only to be
   // ignored — cac reports Unknown option and exits for undeclared options)
-  .option('--od-stamp-app <app>', 'sidecar stamp（忽略）', { default: '' })
-  .option('--od-stamp-ipc <path>', 'sidecar stamp（忽略）', { default: '' })
-  .option('--od-stamp-mode <mode>', 'sidecar stamp（忽略）', { default: '' })
-  .option('--od-stamp-namespace <ns>', 'sidecar stamp（忽略）', { default: '' })
-  .option('--od-stamp-source <src>', 'sidecar stamp（忽略）', { default: '' })
+  .option('--od-stamp-app <app>', 'sidecar stamp (ignored)', { default: '' })
+  .option('--od-stamp-ipc <path>', 'sidecar stamp (ignored)', { default: '' })
+  .option('--od-stamp-mode <mode>', 'sidecar stamp (ignored)', { default: '' })
+  .option('--od-stamp-namespace <ns>', 'sidecar stamp (ignored)', { default: '' })
+  .option('--od-stamp-source <src>', 'sidecar stamp (ignored)', { default: '' })
   .action(async (_args: string[], flags: Record<string, unknown>) => {
     const port = Number(flags.port) || 7456;
     const webDistDir =
@@ -39,10 +40,27 @@ cli
     try {
       const { server } = await startRemixclipServer(options);
       console.log(`[remixclip] daemon listening on http://127.0.0.1:${port}`);
+
+      // Control channel used by `tools-dev stop` (fast shutdown) and by
+      // `resolveDaemonUrl` (real service discovery). Absent when the daemon is
+      // started without a sidecar stamp, in which case HTTP keeps working.
+      let ipcServer: Awaited<ReturnType<typeof startDaemonIpc>> = null;
+      ipcServer = await startDaemonIpc({
+        url: `http://127.0.0.1:${port}`,
+        onShutdown: () => {
+          console.log('[remixclip] shutdown requested over sidecar IPC');
+          ipcServer?.close();
+          server.close(() => process.exit(0));
+          // The HTTP server may have keep-alive sockets; never hang the parent.
+          setTimeout(() => process.exit(0), 1500).unref();
+        },
+      });
+
       // Keep running
       await new Promise<void>((resolve) => {
         process.on('SIGINT', () => {
           console.log('\n[remixclip] shutting down...');
+          ipcServer?.close();
           server.close();
           resolve();
         });

@@ -6,11 +6,13 @@
  *   pnpm visual / pnpm visual:record.
  */
 import { defineConfig, devices } from '@playwright/test';
+import { SIDECAR_PORTS } from '@remixclip/sidecar-proto';
 import { fileURLToPath } from 'node:url';
 
 const E2E_ROOT = fileURLToPath(new URL('.', import.meta.url));
 const REPO_ROOT = fileURLToPath(new URL('..', import.meta.url));
-const WEB_PORT = 7457;
+// Same single source as tools-dev: the harness never invents its own port.
+const WEB_PORT = Number(process.env.OD_WEB_PORT ?? SIDECAR_PORTS.web);
 const BASE_URL = `http://127.0.0.1:${WEB_PORT}`;
 
 export default defineConfig({
@@ -51,6 +53,6 @@ export default defineConfig({
     timeout: 180_000,
     stdout: 'ignore',
     stderr: 'pipe',
-    env: { NEXT_TELEMETRY_DISABLED: '1' },
+    env: { NEXT_TELEMETRY_DISABLED: '1', PORT: String(WEB_PORT) },
   },
 });
