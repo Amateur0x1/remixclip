@@ -1,0 +1,47 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build outputs
+dist/
+.next/
+out/
+*.tsbuildinfo
+
+# Next.js 自动生成，路径随 dev/build 模式翻转，不入库
+next-env.d.ts
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# RemixClip runtime data
+.remixclip/
+.remixclip-agent/
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+
+# Test
+coverage/
+.nyc_output/
+# 视觉回归产物：基线图 e2e/baselines 入库，实际截图与 diff 不入库
+e2e/.artifacts/
+
+# Temp
+.tmp/
+*.bak.remixclip-skills/

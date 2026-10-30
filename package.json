@@ -1,0 +1,43 @@
+{
+  "name": "remixclip",
+  "version": "0.1.0",
+  "license": "Apache-2.0",
+  "private": true,
+  "packageManager": "pnpm@10.33.2",
+  "type": "module",
+  "description": "RemixClip — 本地优先的产品工作台",
+  "scripts": {
+    "tools-dev": "pnpm exec tools-dev",
+    "typecheck": "pnpm -r --workspace-concurrency=4 --if-present run typecheck",
+    "i18n:check": "tsx ./scripts/i18n-check.ts",
+    "visual": "pnpm --dir e2e run visual",
+    "visual:record": "pnpm --dir e2e run visual:record",
+    "extension:dev": "pnpm --dir extensions/remixclip-companion run dev",
+    "extension:build": "pnpm --dir extensions/remixclip-companion run build"
+  },
+  "devDependencies": {
+    "@remixclip/contracts": "workspace:*",
+    "@remixclip/daemon": "workspace:*",
+    "@remixclip/tools-dev": "workspace:*",
+    "@types/node": "20.19.39",
+    "tsx": "4.22.3",
+    "typescript": "5.9.3"
+  },
+  "engines": {
+    "node": "~24",
+    "pnpm": ">=10.33.2 <11"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "better-sqlite3",
+      "electron",
+      "esbuild",
+      "@ffmpeg-installer/darwin-arm64",
+      "@ffmpeg-installer/darwin-x64",
+      "@ffmpeg-installer/linux-x64",
+      "@ffprobe-installer/darwin-arm64",
+      "@ffprobe-installer/darwin-x64",
+      "@ffprobe-installer/linux-x64"
+    ]
+  }
+}

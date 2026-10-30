@@ -1,0 +1,53 @@
+{
+  "name": "@remixclip/daemon",
+  "version": "0.1.0",
+  "license": "Apache-2.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/cli.js",
+  "types": "./dist/cli.d.ts",
+  "bin": {
+    "remixclip": "./bin/remixclip.mjs"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/cli.d.ts",
+      "default": "./dist/cli.js"
+    },
+    "./package.json": "./package.json",
+    "./sidecar": {
+      "types": "./dist/sidecar/index.d.ts",
+      "default": "./dist/sidecar/index.js"
+    }
+  },
+  "files": [
+    "bin",
+    "dist",
+    "package.json"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@ffmpeg-installer/ffmpeg": "^1.1.0",
+    "@ffprobe-installer/ffprobe": "^2.1.2",
+    "@remixclip/brand": "workspace:*",
+    "@remixclip/contracts": "workspace:*",
+    "@remixclip/platform": "workspace:*",
+    "@remixclip/sidecar": "workspace:*",
+    "@remixclip/sidecar-proto": "workspace:*",
+    "better-sqlite3": "12.10.0",
+    "cac": "6.7.14",
+    "express": "5.2.1",
+    "pixelmatch": "^7.2.0",
+    "pngjs": "^7.0.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "9.6.0",
+    "@types/express": "5.0.6",
+    "@types/node": "20.19.39",
+    "@types/pngjs": "6.0.5",
+    "typescript": "5.9.3"
+  }
+}

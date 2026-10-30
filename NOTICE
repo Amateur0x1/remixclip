@@ -1,0 +1,144 @@
+RemixClip
+Copyright 2026 RemixClip
+
+This product is licensed under the Apache License, Version 2.0. A copy of the
+license text is provided in the LICENSE file at the root of this repository.
+Individual source files carry the SPDX identifier "Apache-2.0" in their header.
+
+The attribution notices below are provided for informational purposes only and
+do not modify the license.
+
+================================================================================
+ARCHITECTURAL REFERENCE AND PORTED CODE
+================================================================================
+
+Open Design
+--------------------------------------------------------------------------------
+Upstream project : Open Design
+Upstream URL     : https://github.com/Amateur0x1/open-design
+License          : Apache License, Version 2.0
+Copyright        : the Open Design authors
+Relationship     : RemixClip's architecture follows Open Design closely — the
+                   daemon-as-single-source-of-truth split, project/conversation
+                   ownership rules, the runtime registry and per-CLI stream
+                   parsers, the sidecar process lifecycle, the tools-dev
+                   entry point, and the SSE run protocol. Parts of the
+                   implementation are ported or adapted from it; such files
+                   carry comments marking them as ported from open-design.
+
+Both projects are licensed under the Apache License, Version 2.0. Ported
+portions remain under Apache-2.0 and retain the upstream attribution above.
+No additional restriction is imposed on top of the Apache-2.0 terms.
+
+================================================================================
+VENDORED COMPONENTS
+================================================================================
+
+RemixClip 素材助手 (remixclip-companion)
+--------------------------------------------------------------------------------
+Upstream project : social-media-sniffer
+Upstream URL     : https://github.com/Amateur0x1/social-media-sniffer
+Copied subdir    : extension/
+Snapshot commit  : 0a68863349c76af8c2819b402dca9142732cab7c
+Snapshot date    : 2026-10-29 (upstream v0.4.0)
+Location here    : extensions/remixclip-companion
+
+Modifications relative to the upstream snapshot
+(verified with:
+  diff -rq --exclude=node_modules --exclude=dist --exclude=.DS_Store \
+       --exclude='*.lock' --exclude=package-lock.json \
+       <upstream>/extension extensions/remixclip-companion)
+
+  12 files modified:
+
+    index.html
+    manifest.config.ts
+    package.json
+    src/App.tsx
+    src/content/xhs-sniffer.ts
+    src/content/xhs-injected.js
+    src/content/bili-sniffer.ts
+    src/content/bili-injected.js
+    src/content/dy-sniffer.ts
+    src/content/dy-injected.js
+    src/service_worker.ts
+    src/store/sniffer-store.ts
+
+  4 additions:
+
+    src/lib/                     new directory (contains remixclip.ts only)
+    pnpm-lock.yaml               standalone lockfile, absent from the upstream
+                                 snapshot; a package-manager artifact, not a
+                                 source change
+    LICENSE                      this copy's own Apache-2.0 text (identical to
+                                 the repository root LICENSE)
+    NOTICE.md                    this copy's attribution summary
+
+Nature of the modifications:
+
+  1. Rebranding: social-media-sniffer -> RemixClip 素材助手. Affects the
+     extension product name, UI copy, manifest name/description, and the
+     identifiers used for messaging and storage keys.
+  2. manifest.config.ts: host_permissions extended with http://127.0.0.1/*
+     and http://localhost/* so the extension can talk to the local RemixClip
+     daemon.
+  3. manifest.config.ts: unused tabs / activeTab permissions removed.
+  4. src/lib/remixclip.ts added: daemon pairing (POST /api/library/pair),
+     liveness probe (GET /api/library/ping) and import upload
+     (POST /api/library/import). This module has no upstream counterpart.
+
+Copyright and licensing of the vendored copy:
+
+  This repository holds the full copyright in this copy and licenses it under
+  the Apache License, Version 2.0, as stated in the LICENSE file at the root of
+  this repository. The upstream author and this repository's copyright holder
+  are the same party, which is why the license is re-declared here rather than
+  inherited.
+
+  FACT: the upstream snapshot 0a68863349c76af8c2819b402dca9142732cab7c contains
+  no LICENSE file, and the upstream extension/package.json contains no license
+  field. That snapshot is therefore "all rights reserved" by default, and this
+  copy inherits no upstream license of any kind. The Apache-2.0 grant above
+  comes solely from the copyright holder's re-declaration in this repository.
+
+================================================================================
+OTHER THIRD-PARTY ASSETS
+================================================================================
+
+The following assets are third-party material that is not authored by this
+project. They are NOT covered by this project's Apache-2.0 grant; the terms of
+each upstream provider apply. A complete inventory of production dependencies
+and their licenses is in THIRD_PARTY_NOTICES.md.
+
+1. Geist and Geist Mono fonts
+   Package : geist (npm), imported via `geist/font/sans` and `geist/font/mono`
+             in apps/web/app/layout.tsx and bundled into the apps/web build.
+   License : SIL Open Font License 1.1
+   Holder  : Vercel, Inc. and the Geist font contributors.
+
+2. Agent product logos -- apps/web/public/agent-icons/*
+   Third-party product names and logos (e.g. Claude, Codex, Gemini, Copilot,
+   Cursor, Devin, Kimi, Qwen, Trae, and others) rendered by
+   apps/web/src/components/agents/AgentIcon.tsx.
+   These are trademarks and/or copyrighted works of their respective owners,
+   included solely to identify the corresponding third-party products. No
+   license is claimed over them, and their inclusion does not imply any
+   affiliation with or endorsement by the trademark owners.
+
+3. FFmpeg and FFprobe binaries
+   Packages : @ffmpeg-installer/ffmpeg, @ffprobe-installer/ffprobe and their
+              platform binary packages, resolved at runtime by
+              apps/daemon/src/library/ffmpeg.ts.
+   License  : the npm wrapper packages declare LGPL-2.1. FFmpeg itself is
+              LGPL-2.1-or-later or GPL depending on the build options used by
+              the distributor of the binary; the license shipped with the
+              resolved binary governs. The binaries are invoked as separate
+              executables and are not statically linked into this project.
+   Anyone redistributing this project together with those binaries must comply
+   with the corresponding FFmpeg license terms.
+
+Scope note: packages/brand contains only original TypeScript constants (brand
+name, data directory names, IPC paths) and no third-party visual assets.
+apps/daemon bundles no third-party skills or reference documents
+(apps/daemon/src/research/{skills,tools,agents} and apps/daemon/src/prompts
+contain no documentation files).
