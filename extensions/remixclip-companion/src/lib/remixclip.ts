@@ -8,7 +8,7 @@
  * The extension still runs inside Chrome and talks to the RemixClip daemon only over the
  * local loopback address:
  *   GET  /api/library/ping    liveness probe
- *   POST /api/library/pair    exchange a 6-digit pairing code for a device token
+ *   POST /api/library/pair    claim a device token while the app's trust window is open
  *   POST /api/library/import  push exported content with the token
  *
  * No other endpoint is touched besides pairing and import; data never leaves the machine.
@@ -89,21 +89,8 @@ export async function pingRemixclip(endpoint: string, timeoutMs = 2500): Promise
   }
 }
 
-export async function pairRemixclip(endpoint: string, code: string): Promise<RemixclipPairResult> {
-  const res = await fetch(`${normalizeEndpoint(endpoint)}/api/library/pair`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ code: code.trim().toUpperCase(), client: "RemixClip 素材助手" }),
-  });
-  const data = await res.json().catch(() => null) as (Partial<RemixclipPairResult> & { error?: string }) | null;
-  if (!res.ok || !data?.token) {
-    throw new Error(data?.error ?? `配对失败：HTTP ${res.status}`);
-  }
-  return data as RemixclipPairResult;
-}
-
 /**
- * Pair without a code. The daemon only accepts this from a chrome-extension origin AND while the
+ * Claim a device token. The daemon only accepts this from a chrome-extension origin AND while the
  * user has just clicked 「开启自动连接」 in the RemixClip library dialog (2-minute window).
  */
 export async function pairRemixclipAuto(
@@ -126,7 +113,7 @@ export async function sendToRemixclip(
   config: RemixclipConfig,
   payload: RemixclipExportPayload,
 ): Promise<{ itemCount: number; created: number; updated: number }> {
-  if (!config.token) throw new Error("还没有连接 RemixClip，请先配对");
+  if (!config.token) throw new Error("还没有连接 RemixClip，请先在素材库里开启自动连接");
   const res = await fetch(`${normalizeEndpoint(config.endpoint)}/api/library/import`, {
     method: "POST",
     headers: {

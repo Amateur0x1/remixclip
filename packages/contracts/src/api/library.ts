@@ -264,9 +264,6 @@ export type LibraryDevice = z.infer<typeof libraryDeviceSchema>;
 export const libraryPairingInfoSchema = z.object({
   /** Daemon address the extension should fill in, e.g. http://127.0.0.1:7456. */
   endpoint: z.string(),
-  /** 6-digit one-time pairing code (case-insensitive). */
-  code: z.string(),
-  expiresAt: z.number(),
   devices: z.array(libraryDeviceSchema),
 });
 
@@ -274,19 +271,12 @@ export type LibraryPairingInfo = z.infer<typeof libraryPairingInfoSchema>;
 
 /** Request body schema for POST /api/library/pair.
  *
- * Two ways in:
- *   - `code`: the 6-char one-time code shown in the app (works from anywhere, incl. curl);
- *   - `auto: true`: extension-only shortcut that skips typing while the user has just opened the
- *     app's 2-minute auto-pair window (the daemon still checks the chrome-extension origin).
+ * There is exactly one way in: the extension asks while the user has just opened the app's
+ * 2-minute auto-pair window. The daemon checks the chrome-extension origin, so the body carries
+ * nothing but a display name. Unknown keys are ignored, which keeps older extension builds
+ * (still sending `auto: true`) compatible.
  */
 export const libraryPairRequestSchema = z.object({
-  code: z
-    .string({ invalid_type_error: '缺少配对码' })
-    .transform((value) => value.trim())
-    .refine((value) => value.length > 0 && value.length <= 32, { message: '缺少配对码' })
-    .optional(),
-  /** Extension-origin only: pair without a code during the app's auto-pair window. */
-  auto: z.boolean().optional(),
   /** Device name, defaults to `browser extension`. */
   client: z.string().max(80).optional(),
 });

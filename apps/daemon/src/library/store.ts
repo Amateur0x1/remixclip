@@ -37,16 +37,12 @@ interface LibraryState {
   dataDir: string;
   configPath: string;
   devices: StoredDevice[];
-  pairingCode: string | null;
-  pairingExpiresAt: number;
-  /** Until when the browser extension may pair without a code (0 = closed). */
+  /** Until when the browser extension may pair (0 = closed). */
   autoPairUntil: number;
 }
 
 const MAX_IMAGES = 40;
 const MAX_COMMENTS = 800;
-const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-const PAIRING_TTL_MS = 10 * 60 * 1000;
 /** The extension's "connect" click is only honoured while the user just asked for it in the app. */
 const AUTO_PAIR_TTL_MS = 2 * 60 * 1000;
 
@@ -71,8 +67,6 @@ export function initLibrary(dataDir: string): void {
     dataDir: root,
     configPath,
     devices,
-    pairingCode: null,
-    pairingExpiresAt: 0,
     autoPairUntil: 0,
   };
 }
@@ -89,25 +83,6 @@ function persistDevices(): void {
 }
 
 // ── Pairing ─────────────────────────────────────────────────────────────────
-
-function randomCode(length = 6): string {
-  const bytes = randomBytes(length);
-  let code = '';
-  for (let i = 0; i < length; i += 1) {
-    code += CODE_ALPHABET[bytes[i]! % CODE_ALPHABET.length];
-  }
-  return code;
-}
-
-export function issuePairingCode(): { code: string; expiresAt: number } {
-  const current = ensureState();
-  const now = Date.now();
-  if (!current.pairingCode || current.pairingExpiresAt <= now) {
-    current.pairingCode = randomCode();
-    current.pairingExpiresAt = now + PAIRING_TTL_MS;
-  }
-  return { code: current.pairingCode, expiresAt: current.pairingExpiresAt };
-}
 
 export function listDevices(): LibraryDevice[] {
   return ensureState()
@@ -144,21 +119,8 @@ function createDevice(client?: string): StoredDevice {
   return device;
 }
 
-export function pairDevice(code: string, client?: string): StoredDevice | null {
-  const current = ensureState();
-  const now = Date.now();
-  if (!current.pairingCode || current.pairingExpiresAt <= now) return null;
-  if (code.trim().toUpperCase() !== current.pairingCode) return null;
-
-  const device = createDevice(client);
-  // One-time pairing code: invalidated once used, regenerated next time the pairing panel opens.
-  current.pairingCode = null;
-  current.pairingExpiresAt = 0;
-  return device;
-}
-
 /**
- * Open a short window in which the browser extension may pair without typing a code.
+ * Open a short window in which the browser extension may pair.
  * The user triggers it from the library dialog ("一键连接"), so consent is explicit and time-boxed.
  */
 export function openAutoPairWindow(ttlMs = AUTO_PAIR_TTL_MS): number {
@@ -168,13 +130,13 @@ export function openAutoPairWindow(ttlMs = AUTO_PAIR_TTL_MS): number {
   return expiresAt;
 }
 
-/** Remaining auto-pair window (0 = closed). Repeated pairs inside the window are allowed. */
+/** Remaining pairing window (0 = closed). Repeated pairs inside the window are allowed. */
 export function autoPairExpiresAt(): number {
   const current = ensureState();
   return current.autoPairUntil > Date.now() ? current.autoPairUntil : 0;
 }
 
-/** Pair without a code; only valid while the app's auto-pair window is open. */
+/** Create a device token; only valid while the app's pairing window is open. */
 export function pairDeviceAuto(client?: string): StoredDevice | null {
   if (!autoPairExpiresAt()) return null;
   return createDevice(client);

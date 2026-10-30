@@ -1,6 +1,6 @@
 /**
- * [INPUT]: extension import requests, library query params, pairing codes, remote CDN image/video
- *   URLs and local media paths.
+ * [INPUT]: extension import requests, library query params, device pairing requests, remote CDN
+ *   image/video URLs and local media paths.
  * [OUTPUT]: library REST endpoints, video download/query/delete, remote media proxy with referer and
  *   local media proxy.
  * [POS]: daemon's library HTTP boundary; inputs always pass through the zod schemas in contracts
@@ -30,13 +30,11 @@ import {
   importLibraryItems,
   initLibrary,
   isAllowedMediaHost,
-  issuePairingCode,
   listDevices,
   listLibraryBatches,
   listLibraryItems,
   mediaReferer,
   openAutoPairWindow,
-  pairDevice,
   pairDeviceAuto,
   removeDevice,
 } from '../library/store.js';
@@ -103,7 +101,7 @@ function requireDevice(req: Request, res: Response): boolean {
   const origin = req.get('origin') ?? '';
   if (!isExtensionOrigin(origin)) return true;
   if (authenticateDevice(requestToken(req))) return true;
-  res.status(401).json({ error: '未配对：请先在 RemixClip 素材库中获取配对码' });
+  res.status(401).json({ error: '未配对：请在 RemixClip 素材库中点击「连接插件」后再试' });
   return false;
 }
 
@@ -118,55 +116,40 @@ export function registerLibraryRoutes(app: Express, dataDir: string, db: Databas
   });
 
   // ── Pairing ─────────────────────────────────────────────────────────────
+  // The app's connect dialog reads this: the endpoint to point the extension at, plus the
+  // devices that already hold a token (so the list refreshes while the dialog is open).
   app.get('/api/library/pairing', (req: Request, res: Response) => {
-    const { code, expiresAt } = issuePairingCode();
     const info: LibraryPairingInfo = {
       endpoint: endpointFor(req),
-      code,
-      expiresAt,
       devices: listDevices(),
     };
     res.json(info);
   });
 
-// Opened by the app (never by the extension): lets the extension pair without a code for 2 min.
-app.post('/api/library/pair-window', (req: Request, res: Response) => {
-  if (isExtensionOrigin(req.get('origin') ?? '')) {
-    res.status(403).json({ error: '请先在 RemixClip 素材库中开启自动连接' });
-    return;
-  }
-  res.json({ expiresAt: openAutoPairWindow() });
-});
+  // Opened by the app (never by the extension): lets the extension pair for the next 2 minutes.
+  app.post('/api/library/pair-window', (req: Request, res: Response) => {
+    if (isExtensionOrigin(req.get('origin') ?? '')) {
+      res.status(403).json({ error: '请先在 RemixClip 素材库中开启自动连接' });
+      return;
+    }
+    res.json({ expiresAt: openAutoPairWindow() });
+  });
 
-app.post('/api/library/pair', (req: Request, res: Response) => {
-const parsed = libraryPairRequestSchema.safeParse(req.body ?? {});
-if (!parsed.success) {
-res.status(400).json({ error: firstIssueMessage(parsed.error, '缺少配对码') });
-return;
-}
-const { code, auto, client } = parsed.data;
-if (auto) {
-// Auto-pairing is only meaningful from the extension, and only inside the window the
-// user just opened in the app; a web page cannot set this Origin header.
-if (!isExtensionOrigin(req.get('origin') ?? '')) {
-res.status(403).json({ error: '自动连接只能由浏览器插件发起' });
-return;
-}
-const device = pairDeviceAuto(client);
-if (!device) {
-res.status(400).json({ error: '自动连接未开启或已过期：请在 RemixClip 素材库中点击「连接插件」' });
-return;
-}
-res.json({ token: device.token, device, endpoint: endpointFor(req) });
-return;
-}
-if (!code) {
-res.status(400).json({ error: '缺少配对码' });
-return;
-}
-const device = pairDevice(code, client);
-if (!device) {
-      res.status(400).json({ error: '配对码无效或已过期，请在 RemixClip 中重新获取' });
+  // Pairing is extension-only and only inside the window the user just opened: a web page
+  // cannot set this Origin header, and there is no code to guess or leak.
+  app.post('/api/library/pair', (req: Request, res: Response) => {
+    if (!isExtensionOrigin(req.get('origin') ?? '')) {
+      res.status(403).json({ error: '配对只能由浏览器插件发起' });
+      return;
+    }
+    const parsed = libraryPairRequestSchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      res.status(400).json({ error: firstIssueMessage(parsed.error, '配对请求不合法') });
+      return;
+    }
+    const device = pairDeviceAuto(parsed.data.client);
+    if (!device) {
+      res.status(400).json({ error: '连接窗口未开启或已过期：请在 RemixClip 素材库中点击「连接插件」' });
       return;
     }
     res.json({ token: device.token, device, endpoint: endpointFor(req) });

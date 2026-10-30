@@ -14,7 +14,6 @@ import {
   DEFAULT_REMIXCLIP_ENDPOINT,
   clearRemixclipConfig,
   loadRemixclipConfig,
-  pairRemixclip,
   pairRemixclipAuto,
   pingRemixclip,
   saveRemixclipConfig,
@@ -61,16 +60,15 @@ function App() {
   // ── RemixClip binding ──
   const [bridge, setBridge] = useState<RemixclipConfig>({ endpoint: DEFAULT_REMIXCLIP_ENDPOINT, token: "" });
   const [endpointDraft, setEndpointDraft] = useState(DEFAULT_REMIXCLIP_ENDPOINT);
-  const [pairCode, setPairCode] = useState("");
   const [bridgeOpen, setBridgeOpen] = useState(false);
   const [bridgeOnline, setBridgeOnline] = useState<boolean | null>(null);
   const [bridgeBusy, setBridgeBusy] = useState(false);
   const [bridgeError, setBridgeError] = useState("");
-  const [manualPairOpen, setManualPairOpen] = useState(false);
+  const [endpointOpen, setEndpointOpen] = useState(false);
   const [sending, setSending] = useState(false);
   const [sendStatus, setSendStatus] = useState("");
 
-  /** Shared tail of both pairing paths: remember the token, flip the UI to "connected". */
+  /** Shared tail of every pairing path: remember the token, flip the UI to "connected". */
   const applyPair = useCallback(async (result: RemixclipPairResult, fallbackEndpoint: string) => {
     const next: RemixclipConfig = {
       endpoint: result.endpoint || fallbackEndpoint,
@@ -81,7 +79,6 @@ function App() {
     await saveRemixclipConfig(next);
     setBridge(next);
     setEndpointDraft(next.endpoint);
-    setPairCode("");
     setBridgeOnline(true);
     return next;
   }, []);
@@ -128,7 +125,7 @@ function App() {
       if (cancelled) return;
       setBridgeOnline(online);
       if (!online) return;
-      // The app may already be in its 2-minute trust window: pair without asking for a code.
+      // The app may already be in its 2-minute trust window: pair silently.
       try {
         await applyPair(await pairRemixclipAuto(endpointDraft), endpointDraft);
         if (cancelled) return;
@@ -370,24 +367,7 @@ function App() {
     setSendStatus("已下载 JSON 文件");
   }, [buildExportPayload]);
 
-  const handlePair = useCallback(async () => {
-    if (!pairCode.trim()) {
-      setBridgeError("请先填写配对码");
-      return;
-    }
-    setBridgeBusy(true);
-    setBridgeError("");
-    try {
-      await applyPair(await pairRemixclip(endpointDraft, pairCode), endpointDraft);
-      setSendStatus("已连接 RemixClip，之后的导出会直接进入素材库");
-    } catch (err) {
-      setBridgeError(err instanceof Error ? err.message : "配对失败");
-    } finally {
-      setBridgeBusy(false);
-    }
-  }, [endpointDraft, pairCode, applyPair]);
-
-  /** Fast path: no code, works while the app's auto-pair window is open. */
+  /** Works while the app's pairing window is open (the user just clicked 「开启自动连接」). */
   const handleAutoPair = useCallback(async () => {
     setBridgeBusy(true);
     setBridgeError("");
@@ -684,10 +664,10 @@ function App() {
                     {bridgeBusy ? "连接中…" : "连接 RemixClip"}
                   </button>
                 </div>
-                <button style={S.bridgeLink} onClick={() => setManualPairOpen((open) => !open)}>
-                  {manualPairOpen ? "收起手动配对" : "手动填配对码"}
+                <button style={S.bridgeLink} onClick={() => setEndpointOpen((open) => !open)}>
+                  {endpointOpen ? "收起高级设置" : "自定义服务地址"}
                 </button>
-                {manualPairOpen && (
+                {endpointOpen && (
                   <>
                     <label style={S.fieldLabel}>服务地址</label>
                     <input
@@ -696,24 +676,11 @@ function App() {
                       spellCheck={false}
                       placeholder={DEFAULT_REMIXCLIP_ENDPOINT}
                       onChange={(event) => setEndpointDraft(event.target.value)}
+                      onBlur={() => { void pingRemixclip(endpointDraft).then(setBridgeOnline); }}
                     />
-                    <label style={S.fieldLabel}>配对码</label>
-                    <input
-                      style={{ ...S.fieldInput, letterSpacing: 4, fontWeight: 700 }}
-                      value={pairCode}
-                      maxLength={6}
-                      placeholder="ABC123"
-                      onChange={(event) => setPairCode(event.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ""))}
-                    />
-                    <div style={S.bridgeActions}>
-                      <button
-                        style={{ ...S.btnSecondary }}
-                        disabled={bridgeBusy || !pairCode.trim()}
-                        onClick={() => void handlePair()}
-                      >
-                        用配对码连接
-                      </button>
-                    </div>
+                    <p style={S.bridgeHelp}>
+                      默认 http://127.0.0.1:7456；只有 daemon 跑了自定义端口时才需要改。
+                    </p>
                   </>
                 )}
               </>
