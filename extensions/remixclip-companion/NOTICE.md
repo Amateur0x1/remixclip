@@ -21,7 +21,7 @@ Modified files: `index.html`, `manifest.config.ts`, `package.json`,
 `src/App.tsx`, `src/content/{xhs,bili,dy}-sniffer.ts`,
 `src/content/{xhs,bili,dy}-injected.js`, `src/service_worker.ts`,
 `src/store/sniffer-store.ts`.
-Added: `src/lib/remixclip.ts` (daemon pairing / ping / import), this package's
+Added: `src/lib/remixclip.ts` (daemon ping / heartbeat / import), this package's
 own independent `pnpm-lock.yaml`, and this package's own `LICENSE` and
 `NOTICE.md` files.
 

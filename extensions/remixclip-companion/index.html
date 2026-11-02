@@ -18,6 +18,32 @@
       body {
         min-width: 320px;
       }
+      /*
+       * Chrome paints its UA focus ring (a hard black box) on buttons that were just clicked,
+       * which reads as a broken selection outline inside the side panel. Keep an indicator for
+       * keyboard users only, and make it a soft neutral ring instead of the browser default.
+       */
+      button:focus {
+        outline: none;
+      }
+      button:focus-visible {
+        outline: 2px solid rgba(17, 17, 17, 0.22);
+        outline-offset: 2px;
+      }
+      input[type="checkbox"]:focus-visible {
+        outline: 2px solid rgba(17, 17, 17, 0.22);
+        outline-offset: 2px;
+      }
+      /*
+       * Rail tiles: hover tint is applied inline by the component (inline background wins over
+       * stylesheets), so only the press feedback lives here.
+       */
+      button.rc-tile {
+        transition: background-color 0.15s ease, transform 0.12s ease;
+      }
+      button.rc-tile:active:not(:disabled) {
+        transform: scale(0.95);
+      }
     </style>
   </head>
   <body>

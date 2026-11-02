@@ -5,31 +5,31 @@
 /**
  * RemixClip bridge layer.
  *
- * The extension still runs inside Chrome and talks to the RemixClip daemon only over the
- * local loopback address:
- *   GET  /api/library/ping    liveness probe
- *   POST /api/library/pair    claim a device token while the app's trust window is open
- *   POST /api/library/import  push exported content with the token
+ * There is no pairing handshake and no token: the daemon binds 127.0.0.1 only and gates the
+ * library API by the chrome-extension origin, so the port IS the connection. The side panel runs
+ * these calls against the loopback address:
+ *   GET  /api/library/ping    liveness probe, returns { app: "remixclip" }
+ *   POST /api/library/greet   heartbeat so the app can show "extension connected"
+ *   POST /api/library/import  push exported content
  *
- * No other endpoint is touched besides pairing and import; data never leaves the machine.
+ * Every time the panel opens it probes the remembered port, then the default, then a few common
+ * dev ports; when nothing answers the UI asks the user for the right port. Data never leaves the
+ * machine.
  */
 
 import type { PlatformKey } from "../types/common";
 
 const CONFIG_KEY = "remixclip:config";
-export const DEFAULT_REMIXCLIP_ENDPOINT = "http://127.0.0.1:7456";
+
+/** First port probed, and the daemon's preferred port (tools-dev and the desktop shell use it). */
+export const DEFAULT_REMIXCLIP_PORT = 7456;
+
+/** Extra ports probed after the remembered/default one; dev servers often take 7457+ next door. */
+const PROBE_PORTS = [7457, 7458, 7459, 7460, 7461];
 
 export interface RemixclipConfig {
-  endpoint: string;
-  token: string;
-  deviceName?: string;
-  pairedAt?: number;
-}
-
-export interface RemixclipPairResult {
-  token: string;
-  device: { id: string; name: string; createdAt: number };
-  endpoint: string;
+  /** TCP port of the local daemon. No endpoint/token: the host is always 127.0.0.1. */
+  port: number;
 }
 
 export interface RemixclipExportPayload {
@@ -42,40 +42,69 @@ export interface RemixclipExportPayload {
   comments?: Record<string, unknown>;
 }
 
-function normalizeEndpoint(value: string): string {
-  const trimmed = value.trim().replace(/\/+$/, "");
-  if (!trimmed) return DEFAULT_REMIXCLIP_ENDPOINT;
-  return /^https?:\/\//i.test(trimmed) ? trimmed : `http://${trimmed}`;
+function isPort(value: number): boolean {
+  return Number.isInteger(value) && value > 0 && value <= 65535;
+}
+
+/** Parse a user-typed port: `7456`, `127.0.0.1:7456` and `http://127.0.0.1:7456` all work. */
+export function parsePort(value: unknown): number | null {
+  if (typeof value === "number") return isPort(value) ? value : null;
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  if (/^\d+$/.test(trimmed)) {
+    const port = Number(trimmed);
+    return isPort(port) ? port : null;
+  }
+  try {
+    const url = new URL(/^[a-z]+:\/\//i.test(trimmed) ? trimmed : `http://${trimmed}`);
+    if (!url.port) return null;
+    return parsePort(url.port);
+  } catch {
+    return null;
+  }
+}
+
+/** Port out of the pre-0.5 endpoint config, so an existing install keeps working after upgrade. */
+function portFromLegacyEndpoint(value: unknown): number | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  try {
+    const url = new URL(/^[a-z]+:\/\//i.test(trimmed) ? trimmed : `http://${trimmed}`);
+    return url.port ? parsePort(url.port) : null;
+  } catch {
+    return null;
+  }
+}
+
+export function endpointFor(port: number): string {
+  return `http://127.0.0.1:${port}`;
+}
+
+/** Remembered port first, then the default and its neighbours; deduplicated. */
+export function portCandidates(preferred?: number | null): number[] {
+  const candidates = [preferred, DEFAULT_REMIXCLIP_PORT, ...PROBE_PORTS];
+  return [...new Set(candidates.filter((port): port is number => typeof port === "number" && isPort(port)))];
 }
 
 export async function loadRemixclipConfig(): Promise<RemixclipConfig> {
   const result = await chrome.storage.local.get(CONFIG_KEY);
-  const stored = result[CONFIG_KEY] as Partial<RemixclipConfig> | undefined;
-  return {
-    endpoint: normalizeEndpoint(stored?.endpoint ?? DEFAULT_REMIXCLIP_ENDPOINT),
-    token: stored?.token ?? "",
-    deviceName: stored?.deviceName,
-    pairedAt: stored?.pairedAt,
-  };
+  const stored = result[CONFIG_KEY] as { port?: unknown; endpoint?: unknown } | undefined;
+  const port = parsePort(stored?.port) ?? portFromLegacyEndpoint(stored?.endpoint) ?? DEFAULT_REMIXCLIP_PORT;
+  return { port };
 }
 
 export async function saveRemixclipConfig(config: RemixclipConfig): Promise<void> {
-  await chrome.storage.local.set({
-    [CONFIG_KEY]: { ...config, endpoint: normalizeEndpoint(config.endpoint) },
-  });
+  // Only the port survives: old configs carried endpoint/token fields that are deliberately dropped.
+  await chrome.storage.local.set({ [CONFIG_KEY]: { port: config.port } });
 }
 
-export async function clearRemixclipConfig(): Promise<RemixclipConfig> {
-  const next: RemixclipConfig = { endpoint: DEFAULT_REMIXCLIP_ENDPOINT, token: "" };
-  await saveRemixclipConfig(next);
-  return next;
-}
-
-export async function pingRemixclip(endpoint: string, timeoutMs = 2500): Promise<boolean> {
+export async function pingRemixclip(port: number, timeoutMs = 2500): Promise<boolean> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const res = await fetch(`${normalizeEndpoint(endpoint)}/api/library/ping`, {
+    const res = await fetch(`${endpointFor(port)}/api/library/ping`, {
       signal: controller.signal,
       cache: "no-store",
     });
@@ -90,38 +119,47 @@ export async function pingRemixclip(endpoint: string, timeoutMs = 2500): Promise
 }
 
 /**
- * Claim a device token. The daemon only accepts this from a chrome-extension origin AND while the
- * user has just clicked 「开启自动连接」 in the RemixClip library dialog (2-minute window).
+ * Find the daemon: remember the last port that answered, then fall back to the default and the
+ * usual neighbours. Returns null when nothing answers, which is the signal to ask the user.
  */
-export async function pairRemixclipAuto(
-  endpoint: string,
-  client = "RemixClip 素材助手",
-): Promise<RemixclipPairResult> {
-  const res = await fetch(`${normalizeEndpoint(endpoint)}/api/library/pair`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ auto: true, client }),
-  });
-  const data = await res.json().catch(() => null) as (Partial<RemixclipPairResult> & { error?: string }) | null;
-  if (!res.ok || !data?.token) {
-    throw new Error(data?.error ?? `自动连接失败：HTTP ${res.status}`);
+export async function detectRemixclip(preferred?: number | null): Promise<number | null> {
+  for (const port of portCandidates(preferred)) {
+    // Short timeout: localhost refuses instantly; a long one only makes a miss feel frozen.
+    if (await pingRemixclip(port, 1500)) return port;
   }
-  return data as RemixclipPairResult;
+  return null;
+}
+
+/** Best-effort heartbeat: lets the app's dialog show that this panel is connected. */
+export async function greetRemixclip(port: number): Promise<void> {
+  try {
+    await fetch(`${endpointFor(port)}/api/library/greet`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ client: "RemixClip 素材助手" }),
+    });
+  } catch {
+    // The heartbeat is cosmetic; a failed greet must never block capture or sending.
+  }
 }
 
 export async function sendToRemixclip(
-  config: RemixclipConfig,
+  port: number,
   payload: RemixclipExportPayload,
 ): Promise<{ itemCount: number; created: number; updated: number }> {
-  if (!config.token) throw new Error("还没有连接 RemixClip，请先在素材库里开启自动连接");
-  const res = await fetch(`${normalizeEndpoint(config.endpoint)}/api/library/import`, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      authorization: `Bearer ${config.token}`,
-    },
-    body: JSON.stringify(payload),
-  });
+  const endpoint = endpointFor(port);
+  let res: Response;
+  try {
+    res = await fetch(`${endpoint}/api/library/import`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+  } catch {
+    // A dead daemon surfaces as "Failed to fetch", which tells the user nothing: sending is the
+    // only export path, so name the port and the fix.
+    throw new Error(`连不上 RemixClip（${endpoint}）：请确认应用已启动，或检查端口号是否正确`);
+  }
   const data = await res.json().catch(() => null) as {
     error?: string;
     batch?: { itemCount: number };

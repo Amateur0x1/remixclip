@@ -250,53 +250,45 @@ export const libraryImportResultSchema = z.object({
 
 export type LibraryImportResult = z.infer<typeof libraryImportResultSchema>;
 
-// ── Pairing ────────────────────────────────────────────────────────────────
+// ── Connection ─────────────────────────────────────────────────────────────
+// No pairing handshake, no trust window, no device token. The daemon binds loopback only and the
+// library API is gated by the chrome-extension origin, so the only thing the extension needs is
+// the port. It greets the daemon on every successful probe, which lets the app show "connected".
 
-export const libraryDeviceSchema = z.object({
-  id: z.string(),
+/** One browser companion that greeted the daemon recently (memory only, daemon lifetime). */
+export const libraryCompanionSchema = z.object({
   name: z.string(),
-  createdAt: z.number(),
-  lastSeenAt: z.number().optional(),
+  lastSeenAt: z.number(),
 });
 
-export type LibraryDevice = z.infer<typeof libraryDeviceSchema>;
+export type LibraryCompanion = z.infer<typeof libraryCompanionSchema>;
 
-export const libraryPairingInfoSchema = z.object({
-  /** Daemon address the extension should fill in, e.g. http://127.0.0.1:7456. */
+export const libraryConnectionInfoSchema = z.object({
+  /** Loopback address the extension should dial, e.g. http://127.0.0.1:7456. */
   endpoint: z.string(),
-  devices: z.array(libraryDeviceSchema),
+  /** TCP port the daemon is actually bound to; the extension is pointed at it directly. */
+  port: z.number().nullable(),
+  companions: z.array(libraryCompanionSchema),
 });
 
-export type LibraryPairingInfo = z.infer<typeof libraryPairingInfoSchema>;
+export type LibraryConnectionInfo = z.infer<typeof libraryConnectionInfoSchema>;
 
-/** Request body schema for POST /api/library/pair.
- *
- * There is exactly one way in: the extension asks while the user has just opened the app's
- * 2-minute auto-pair window. The daemon checks the chrome-extension origin, so the body carries
- * nothing but a display name. Unknown keys are ignored, which keeps older extension builds
- * (still sending `auto: true`) compatible.
- */
-export const libraryPairRequestSchema = z.object({
-  /** Device name, defaults to `browser extension`. */
-  client: z.string().max(80).optional(),
-});
+/** Heartbeat body: a display name and nothing secret. Older builds may send extra keys. */
+export const libraryGreetRequestSchema = z
+  .object({
+    client: z.string().max(80).optional(),
+  })
+  .passthrough();
 
-export type LibraryPairRequest = z.infer<typeof libraryPairRequestSchema>;
+export type LibraryGreetRequest = z.infer<typeof libraryGreetRequestSchema>;
 
-/** Response of POST /api/library/pair-window: how long extension auto-pairing is allowed. */
-export const libraryPairWindowSchema = z.object({
-  expiresAt: z.number(),
-});
-
-export type LibraryPairWindow = z.infer<typeof libraryPairWindowSchema>;
-
-export const libraryPairResponseSchema = z.object({
-  token: z.string(),
-  device: libraryDeviceSchema,
+export const libraryGreetResponseSchema = z.object({
+  ok: z.literal(true),
   endpoint: z.string(),
+  port: z.number().nullable(),
 });
 
-export type LibraryPairResponse = z.infer<typeof libraryPairResponseSchema>;
+export type LibraryGreetResponse = z.infer<typeof libraryGreetResponseSchema>;
 
 // ── Local video (downloaded to disk) ───────────────────────────────────────
 

@@ -22,12 +22,16 @@ const nextConfig = {
   // Hide the dev-mode floating indicator: it moves with the HMR state, so visual baseline
   // screenshots must exclude it.
   devIndicators: false,
-  // In dev mode, Next.js rewrites /api/* to the daemon
+  // In dev mode, Next.js rewrites /api/* to the daemon. Mirrors open-design: tools-dev
+  // allocates the daemon port before spawning web and injects it here, so the browser
+  // only ever calls its own origin and a dynamic port never reaches client code.
   async rewrites() {
+    const daemonOrigin =
+      process.env.NEXT_PUBLIC_DAEMON_URL || `http://127.0.0.1:${process.env.OD_PORT || 7456}`;
     return [
       {
         source: '/api/:path*',
-        destination: `${process.env.NEXT_PUBLIC_DAEMON_URL || 'http://127.0.0.1:7456'}/api/:path*`,
+        destination: `${daemonOrigin}/api/:path*`,
       },
     ];
   },

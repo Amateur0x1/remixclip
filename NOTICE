@@ -83,9 +83,10 @@ Nature of the modifications:
      and http://localhost/* so the extension can talk to the local RemixClip
      daemon.
   3. manifest.config.ts: unused tabs / activeTab permissions removed.
-  4. src/lib/remixclip.ts added: daemon pairing (POST /api/library/pair),
-     liveness probe (GET /api/library/ping) and import upload
-     (POST /api/library/import). This module has no upstream counterpart.
+  4. src/lib/remixclip.ts added: daemon connection by loopback port (GET
+     /api/library/ping), a presence heartbeat (POST /api/library/greet) and
+     import upload (POST /api/library/import). This module has no upstream
+     counterpart.
 
 Copyright and licensing of the vendored copy:
 

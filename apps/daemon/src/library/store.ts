@@ -1,18 +1,18 @@
 /**
- * [INPUT]: JSON exported by the browser extension (notes / cards / users / comments) and
- *   local SQLite.
- * [OUTPUT]: Normalized library items, import batches, list queries and device pairing state.
- * [POS]: daemon library domain layer; routes only adapt HTTP, dedup/merge/search all converge here.
- */
+* [INPUT]: JSON exported by the browser extension (notes / cards / users / comments) and
+*   local SQLite.
+* [OUTPUT]: Normalized library items, import batches, list queries and extension presence.
+* [POS]: daemon library domain layer; routes only adapt HTTP, dedup/merge/search all converge here.
+*/
 import type Database from 'better-sqlite3';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { randomBytes, randomUUID } from 'node:crypto';
+import { existsSync, mkdirSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import type {
   LibraryBatch,
   LibraryComment,
+  LibraryCompanion,
   LibraryCounts,
-  LibraryDevice,
   LibraryImportRequest,
   LibraryImportResult,
   LibraryItem,
@@ -21,134 +21,40 @@ import type {
   LibraryListResponse,
   SocialPlatform,
 } from '@remixclip/contracts';
-import { normalizeSocialPlatform } from '@remixclip/contracts';
+import { buildSocialLink, normalizeSocialPlatform, parseSocialLink } from '@remixclip/contracts';
 
 type UnknownRecord = Record<string, unknown>;
 
-interface StoredDevice extends LibraryDevice {
-  token: string;
-}
-
-interface LibraryConfig {
-  devices: StoredDevice[];
-}
-
-interface LibraryState {
-  dataDir: string;
-  configPath: string;
-  devices: StoredDevice[];
-  /** Until when the browser extension may pair (0 = closed). */
-  autoPairUntil: number;
-}
-
 const MAX_IMAGES = 40;
 const MAX_COMMENTS = 800;
-/** The extension's "connect" click is only honoured while the user just asked for it in the app. */
-const AUTO_PAIR_TTL_MS = 2 * 60 * 1000;
+/** Heartbeats are cheap and frequent; this only bounds how long a closed panel is remembered. */
+const COMPANION_TTL_MS = 10 * 60 * 1000;
+const MAX_COMPANIONS = 8;
 
-let state: LibraryState | null = null;
+/** The extension has no token: an in-memory heartbeat is the whole handshake. */
+let companions: LibraryCompanion[] = [];
 
 export function initLibrary(dataDir: string): void {
-  const root = path.resolve(dataDir);
-  if (!existsSync(root)) mkdirSync(root, { recursive: true });
-  const configPath = path.join(root, 'library.json');
-  let devices: StoredDevice[] = [];
-  if (existsSync(configPath)) {
-    try {
-      const parsed = JSON.parse(readFileSync(configPath, 'utf8')) as LibraryConfig;
-      devices = Array.isArray(parsed.devices)
-        ? parsed.devices.filter((device) => typeof device?.token === 'string' && device.token.length > 0)
-        : [];
-    } catch {
-      devices = [];
-    }
-  }
-  state = {
-    dataDir: root,
-    configPath,
-    devices,
-    autoPairUntil: 0,
-  };
+const root = path.resolve(dataDir);
+if (!existsSync(root)) mkdirSync(root, { recursive: true });
 }
 
-function ensureState(): LibraryState {
-  if (!state) throw new Error('素材库尚未初始化');
-  return state;
+// ── Companion presence ──────────────────────────────────────────────────────
+// Deliberately memory-only: a daemon restart should forget stale side panels instead of showing a
+// connection that no longer exists.
+
+export function greetCompanion(client?: string): void {
+const name = client?.trim().slice(0, 80) || 'RemixClip 素材助手';
+const now = Date.now();
+companions = [
+{ name, lastSeenAt: now },
+...companions.filter((item) => item.name !== name),
+].slice(0, MAX_COMPANIONS);
 }
 
-function persistDevices(): void {
-  const current = ensureState();
-  const payload: LibraryConfig = { devices: current.devices };
-  writeFileSync(current.configPath, JSON.stringify(payload, null, 2), 'utf8');
-}
-
-// ── Pairing ─────────────────────────────────────────────────────────────────
-
-export function listDevices(): LibraryDevice[] {
-  return ensureState()
-    .devices.map(({ token: _token, ...device }) => device)
-    .sort((a, b) => b.createdAt - a.createdAt);
-}
-
-export function authenticateDevice(token: string): StoredDevice | null {
-  if (!token) return null;
-  const device = ensureState().devices.find((item) => item.token === token);
-  if (!device) return null;
-  // lastSeenAt is only for display; throttle it to minute granularity to avoid
-  // writing disk on every request.
-  const now = Date.now();
-  if (!device.lastSeenAt || now - device.lastSeenAt > 60_000) {
-    device.lastSeenAt = now;
-    persistDevices();
-  }
-  return device;
-}
-
-function createDevice(client?: string): StoredDevice {
-  const current = ensureState();
-  const now = Date.now();
-  const device: StoredDevice = {
-    id: `dev_${randomUUID()}`,
-    name: client?.trim().slice(0, 80) || 'RemixClip 素材助手',
-    token: randomBytes(24).toString('base64url'),
-    createdAt: now,
-    lastSeenAt: now,
-  };
-  current.devices = [device, ...current.devices].slice(0, 20);
-  persistDevices();
-  return device;
-}
-
-/**
- * Open a short window in which the browser extension may pair.
- * The user triggers it from the library dialog ("一键连接"), so consent is explicit and time-boxed.
- */
-export function openAutoPairWindow(ttlMs = AUTO_PAIR_TTL_MS): number {
-  const current = ensureState();
-  const expiresAt = Date.now() + Math.max(15_000, Math.min(ttlMs, AUTO_PAIR_TTL_MS));
-  current.autoPairUntil = expiresAt;
-  return expiresAt;
-}
-
-/** Remaining pairing window (0 = closed). Repeated pairs inside the window are allowed. */
-export function autoPairExpiresAt(): number {
-  const current = ensureState();
-  return current.autoPairUntil > Date.now() ? current.autoPairUntil : 0;
-}
-
-/** Create a device token; only valid while the app's pairing window is open. */
-export function pairDeviceAuto(client?: string): StoredDevice | null {
-  if (!autoPairExpiresAt()) return null;
-  return createDevice(client);
-}
-
-export function removeDevice(id: string): boolean {
-  const current = ensureState();
-  const before = current.devices.length;
-  current.devices = current.devices.filter((device) => device.id !== id);
-  if (current.devices.length === before) return false;
-  persistDevices();
-  return true;
+export function listCompanions(): LibraryCompanion[] {
+const now = Date.now();
+return companions.filter((item) => now - item.lastSeenAt < COMPANION_TTL_MS);
 }
 
 // ── Normalization ───────────────────────────────────────────────────────────
@@ -194,7 +100,11 @@ function inferPlatform(input: LibraryImportRequest, notes: unknown[]): SocialPla
   const explicit = normalizeSocialPlatform(input.platform);
   if (explicit) return explicit;
   for (const note of notes) {
-    const platform = normalizeSocialPlatform(asRecord(note)?.platform);
+    const record = asRecord(note);
+    // A post link is enough to know the platform: the contracts schema owns every platform's URL
+    // shape, so link-only exports (share sheet, clipboard) no longer need a filename hint.
+    const platform = normalizeSocialPlatform(record?.platform)
+      ?? parseSocialLink(text(record?.page_url))?.platform;
     if (platform) return platform;
   }
   const filename = (input.filename ?? '').toLowerCase();
@@ -234,17 +144,15 @@ function normalizePageUrl(
 ): string | undefined {
   const direct = absoluteUrl(note.page_url) ?? absoluteUrl(asRecord(note.video)?.page_url);
   if (direct) return direct;
-  if (platform === 'xhs') {
-    const token = xsecToken ? `?xsec_token=${encodeURIComponent(xsecToken)}&xsec_source=pc_feed` : '';
-    return `https://www.xiaohongshu.com/explore/${encodeURIComponent(remoteId)}${token}`;
+  // Link shapes live in the contracts platform schema, so a new platform or a changed URL format
+  // is fixed in one place instead of being re-derived here.
+  const canonical = buildSocialLink(platform, remoteId);
+  if (!canonical) return undefined;
+  // 小红书 needs the feed token to open the note when it was captured from the feed.
+  if (platform === 'xhs' && xsecToken) {
+    return `${canonical}?xsec_token=${encodeURIComponent(xsecToken)}&xsec_source=pc_feed`;
   }
-  if (platform === 'bilibili') {
-    if (/^BV[0-9A-Za-z]+$/.test(remoteId)) return `https://www.bilibili.com/video/${remoteId}`;
-    const aid = int(note.aid);
-    if (aid > 0) return `https://www.bilibili.com/video/av${aid}`;
-    return undefined;
-  }
-  return `https://www.douyin.com/video/${encodeURIComponent(remoteId)}`;
+  return canonical;
 }
 
 function normalizeComments(value: unknown): LibraryComment[] {
@@ -282,7 +190,10 @@ function normalizeNoteItem(
 ): LibraryItem | null {
   const note = asRecord(raw);
   if (!note) return null;
-  const remoteId = text(note.note_id) || text(note.aweme_id) || text(note.id);
+  // A post link is often the only identifier an export carries (e.g. a share-sheet capture);
+  // the platform schema turns it back into the id the library is keyed by.
+  const linked = parseSocialLink(text(note.page_url));
+  const remoteId = text(note.note_id) || text(note.aweme_id) || text(note.id) || linked?.remoteId;
   if (!remoteId) return null;
 
   const images = normalizeImages(note, platform);
@@ -340,7 +251,8 @@ function normalizeCardItem(
 ): LibraryItem | null {
   const card = asRecord(raw);
   if (!card) return null;
-  const remoteId = text(card.note_id) || text(card.aweme_id) || text(card.id);
+  const linked = parseSocialLink(text(card.page_url));
+  const remoteId = text(card.note_id) || text(card.aweme_id) || text(card.id) || linked?.remoteId;
   if (!remoteId) return null;
   const cover = absoluteUrl(card.cover_url) ?? absoluteUrl(card.cover);
   const authorName = text(card.author) || text(asRecord(card.author)?.name);
@@ -415,6 +327,17 @@ function mergeItems(existing: LibraryItem, incoming: LibraryItem): LibraryItem {
   };
 }
 
+/** Per-item platform: the item's own field, then its post link, then the batch default. */
+function platformForItem(
+  record: UnknownRecord | null,
+  fallback: SocialPlatform | null,
+): SocialPlatform {
+  return normalizeSocialPlatform(record?.platform)
+    ?? parseSocialLink(text(record?.page_url))?.platform
+    ?? fallback
+    ?? 'xhs';
+}
+
 export function normalizeImport(
   input: LibraryImportRequest,
   batchId: string,
@@ -431,11 +354,11 @@ export function normalizeImport(
   };
 
   for (const note of topNotes) {
-    const notePlatform = normalizeSocialPlatform(asRecord(note)?.platform) ?? platform ?? 'xhs';
+    const notePlatform = platformForItem(asRecord(note), platform);
     add(normalizeNoteItem(note, notePlatform, input.comments?.[text(asRecord(note)?.note_id)], batchId));
   }
   for (const card of topCards) {
-    add(normalizeCardItem(card, normalizeSocialPlatform(asRecord(card)?.platform) ?? platform ?? 'xhs', batchId));
+    add(normalizeCardItem(card, platformForItem(asRecord(card), platform), batchId));
   }
   for (const userRaw of asArray(input.users)) {
     const user = asRecord(userRaw);
@@ -443,17 +366,16 @@ export function normalizeImport(
     for (const note of asArray(user.notes)) {
       const noteId = text(asRecord(note)?.note_id);
       const comments = asRecord(user.comments)?.[noteId];
-      const notePlatform = normalizeSocialPlatform(asRecord(note)?.platform) ?? platform ?? 'xhs';
-      add(normalizeNoteItem(note, notePlatform, comments, batchId));
+      add(normalizeNoteItem(note, platformForItem(asRecord(note), platform), comments, batchId));
     }
     for (const card of asArray(user.cards)) {
-      add(normalizeCardItem(card, platform ?? 'xhs', batchId));
+      add(normalizeCardItem(card, platformForItem(asRecord(card), platform), batchId));
     }
   }
   for (const generic of asArray(input.items)) {
     const record = asRecord(generic);
     if (!record) continue;
-    const itemPlatform = normalizeSocialPlatform(record.platform) ?? platform ?? 'xhs';
+    const itemPlatform = platformForItem(record, platform);
     if (record.kind === 'card' || record.cover_url) {
       add(normalizeCardItem(record, itemPlatform, batchId));
     } else {

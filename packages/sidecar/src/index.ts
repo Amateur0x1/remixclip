@@ -4,6 +4,7 @@ import { readFile, writeFile, rm } from 'node:fs/promises';
 import path from 'node:path';
 import net from 'node:net';
 import { APP_NAME } from '@remixclip/brand';
+import { closeServer, listenOnPort } from './net.js';
 import {
   APP_KEYS,
   type AppKey,
@@ -33,6 +34,9 @@ import {
   type SpawnedProcess,
 } from '@remixclip/platform';
 
+/** npm scope of this workspace; web/desktop are launched through `pnpm --filter <scope>/<app>`. */
+const APP_NAME_SCOPE = '@remixclip';
+
 // ── Re-export key types ────────────────────────────────────────────────────
 
 export type {
@@ -52,8 +56,12 @@ export {
   SIDECAR_DEFAULTS,
   SIDECAR_ENV,
   SIDECAR_MESSAGES,
+  SIDECAR_PORTS,
   SIDECAR_STAMP_FLAGS,
 };
+
+export { allocatePort, parsePortValue } from './port.js';
+export type { PortAllocation, PortRequest, PortSource } from './port.js';
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -177,7 +185,16 @@ export function launchSidecar(request: SidecarRequest): SpawnedSidecar {
   const env: Record<string, string | undefined> = {
     ...process.env,
     ...stampToEnv(stamp),
-    ...(request.port ? { [SIDECAR_ENV.DAEMON_PORT]: String(request.port) } : {}),
+    // The runtime env token is per app: a daemon reads OD_PORT, a web sidecar reads
+    // OD_WEB_PORT. Writing one app's token into another's env is how a child ends
+    // up dialing a port nobody listens on.
+    ...(request.port == null || stamp.app === APP_KEYS.DESKTOP
+      ? {}
+      : {
+          [stamp.app === APP_KEYS.DAEMON ? SIDECAR_ENV.DAEMON_PORT : SIDECAR_ENV.WEB_PORT]: String(
+            request.port,
+          ),
+        }),
     ...(request.env || {}),
   };
 
@@ -320,6 +337,22 @@ export async function restartSidecar(
 
 import { execSync } from 'node:child_process';
 
+/**
+ * Process signature per app. Matching the actual entry point (instead of any
+ * line that merely mentions the app name) keeps `pnpm tools-dev start daemon`
+ * — or a shell whose -c string contains it — from matching itself.
+ */
+function matchesAppProcess(line: string, app: AppKey, namespace: string): boolean {
+  if (app === APP_KEYS.DAEMON) {
+    const entry =
+      line.includes('apps/daemon/dist/cli.js') || line.includes('apps\\daemon\\dist\\cli.js');
+    return entry && line.includes(`${SIDECAR_STAMP_FLAGS.namespace} ${namespace}`);
+  }
+  if (app === APP_KEYS.WEB) return line.includes(`${APP_NAME_SCOPE}/web`);
+  if (app === APP_KEYS.DESKTOP) return line.includes(`${APP_NAME_SCOPE}/desktop`);
+  return false;
+}
+
 export function findSidecarProcesses(stamp: SidecarStamp): ChildProcess[] {
   try {
     // `ps -axo pid=,command=` behaves the same on macOS (BSD) and Linux (GNU)
@@ -336,15 +369,7 @@ export function findSidecarProcesses(stamp: SidecarStamp): ChildProcess[] {
     return output
       .split('\n')
       .map((line) => line.trim())
-      .filter(
-        (line) =>
-          line.includes(APP_NAME) &&
-          line.includes(stamp.app) &&
-          !line.includes('grep') &&
-          // Exclude tools-dev itself (do NOT exclude on the 'tools-dev' substring —
-          // the daemon's stamp arg --od-stamp-source tools-dev contains that word too)
-          !/tools[\\/]dev[\\/](bin|dist)/.test(line),
-      )
+      .filter((line) => !line.includes('grep') && matchesAppProcess(line, stamp.app, stamp.namespace))
       .map((line) => {
         const pid = parseInt(line.split(/\s+/)[0]!, 10);
         if (isNaN(pid) || pid === process.pid || pid === process.ppid) return null;
@@ -358,17 +383,45 @@ export function findSidecarProcesses(stamp: SidecarStamp): ChildProcess[] {
 
 // ── Status ─────────────────────────────────────────────────────────────────
 
-export function getSidecarStatus(stamp: SidecarStamp): SidecarStatus {
+export interface SidecarStatusOptions {
+  /** How long the IPC status query may take before the process is reported unhealthy. */
+  timeoutMs?: number;
+}
+
+/**
+ * Live status: the process scan answers "is it running", the IPC status query
+ * answers "which URL/port did it actually bind". Only the latter can resolve a
+ * dynamically allocated port, so it is the source for reuse decisions.
+ */
+export async function getSidecarStatus(
+  stamp: SidecarStamp,
+  options: SidecarStatusOptions = {},
+): Promise<SidecarStatus> {
   const processes = findSidecarProcesses(stamp);
   const running = processes.length > 0;
-  const pid: number | null = running && processes[0]?.pid != null ? processes[0]!.pid : null;
-  return {
-    stamp,
-    pid,
-    running,
-    url: undefined,
-    healthy: running,
-  };
+  const scannedPid: number | null = running && processes[0]?.pid != null ? processes[0]!.pid : null;
+  if (!running) {
+    return { stamp, pid: null, running: false, healthy: false };
+  }
+  try {
+    const snapshot = await invokeSidecar<{ pid?: number | null; url?: string | null }>(
+      stamp,
+      SIDECAR_MESSAGES.STATUS,
+      undefined,
+      { timeoutMs: options.timeoutMs ?? 800 },
+    );
+    return {
+      stamp,
+      pid: snapshot.pid ?? scannedPid,
+      running: true,
+      url: snapshot.url ?? undefined,
+      healthy: true,
+    };
+  } catch {
+    // A process matched the stamp but does not answer on the control socket
+    // (no IPC, or still booting): report it as running but unverified.
+    return { stamp, pid: scannedPid, running: true, healthy: false };
+  }
 }
 
 // ── IPC ────────────────────────────────────────────────────────────────────
@@ -481,35 +534,21 @@ export function resolveLogFilePath(stamp: SidecarStamp): string {
   return path.join(getSidecarBase(stamp), 'logs', `${stamp.app}.log`);
 }
 
-// ── Port allocation ────────────────────────────────────────────────────────
-
-const portAllocations = new Map<string, number>();
-
-export function allocatePort(request: { app: AppKey; offset?: number }): number {
-  const key = request.app;
-  const cached = portAllocations.get(key);
-  if (cached != null) return cached;
-  const base = SIDECAR_PORTS[request.app] ?? SIDECAR_PORTS.base;
-  const port = base + (request.offset ?? 0);
-  portAllocations.set(key, port);
-  return port;
-}
+// ── Port helpers ───────────────────────────────────────────────────────────
 
 /**
- * True when nothing is listening on `port` for loopback. Used by tools-dev to
- * fail fast instead of letting Next silently bind port+1.
+ * True when nothing is listening on `port` for loopback. Allocation already
+ * probes the port it hands out; this stays for health checks and callers that
+ * need to confirm a port that was not allocated by {@link allocatePort}.
  */
-export function isPortFree(port: number, host = SIDECAR_DEFAULTS.host): Promise<boolean> {
-  return new Promise((resolve) => {
-    const probe = net.createServer();
-    const settle = (free: boolean): void => {
-      probe.removeAllListeners();
-      resolve(free);
-    };
-    probe.once('error', () => settle(false));
-    probe.once('listening', () => probe.close(() => settle(true)));
-    probe.listen(port, host);
-  });
+export async function isPortFree(port: number, host = SIDECAR_DEFAULTS.host): Promise<boolean> {
+  try {
+    const probe = await listenOnPort(port, host);
+    await closeServer(probe);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 // ── SidecarFactory (backward compat) ───────────────────────────────────────

@@ -1,14 +1,15 @@
 'use client';
 
 /**
- * [INPUT]: Library list state, filters, pairing/import actions, and main-area title bar state.
+ * [INPUT]: Library list state, filters, extension-connection/import actions, and main-area title bar state.
  * [OUTPUT]: Library workspace (platform filters, search, cover grid, empty states, drag-and-drop import).
  * [POS]: Main view of the workspace "Library" tab; data comes from the social media extension.
  */
-import { useMemo, useRef, useState } from 'react';
-import type { SocialPlatform } from '@remixclip/contracts';
+import { useLayoutEffect, useMemo, useRef, useState } from 'react';
+import type { LibraryItemSummary, SocialPlatform } from '@remixclip/contracts';
 import {
   ArrowDownUp,
+  Download,
   Images,
   LoaderCircle,
   PanelLeftOpen,
@@ -38,8 +39,9 @@ import { PLATFORM_META } from '@/providers/library';
 import { cn } from '@/lib/utils';
 import { LibraryConnectDialog } from './LibraryConnectDialog';
 import { LibraryDetailDialog } from './LibraryDetailDialog';
+import { LibraryExtensionDialog } from './LibraryExtensionDialog';
 import { LibraryImportDialog } from './LibraryImportDialog';
-import { LibraryItemCard } from './LibraryItemCard';
+import { LibraryItemCard, estimateCoverAspect } from './LibraryItemCard';
 import { useLibrary, type LibrarySort } from './useLibrary';
 
 export interface LibraryPaneProps {
@@ -58,6 +60,64 @@ const SORT_LABEL_KEY = {
   likes: 'library.sortLikes',
 } as const satisfies Record<LibrarySort, DictKey>;
 
+/** 240px keeps covers readable in the ~570px main pane (2 up) and still fits 3-4 up when the
+ *  sidebar is collapsed or the window is wide. */
+const MASONRY_GAP = 20;
+const MASONRY_MIN_COLUMN = 240;
+/** Title + meta row under a cover, as a fraction of the column width (keeps heights comparable). */
+const MASONRY_FOOTER_RATIO = 0.36;
+/** Skeleton covers, cycled so the loading state already reads as a masonry page. */
+const SKELETON_ASPECTS = [3 / 4, 1, 3 / 4, 4 / 3];
+
+/**
+ * Shortest-column masonry (Pinterest-style): every item lands in the currently shortest column,
+ * which keeps reading order roughly left-to-right and — because a placement only depends on the
+ * items before it — lets a new page append without moving cards that are already on screen.
+ * CSS `columns` is rejected on purpose: it re-balances every column on append, so the whole grid
+ * jumps the moment 「加载更多」 is pressed.
+ */
+function useMasonry(items: LibraryItemSummary[]) {
+  // A callback ref (not a ref object) so the observer re-attaches when the container appears:
+  // the masonry container is missing in the onboarding / empty states and mounts later.
+  const [container, setContainer] = useState<HTMLDivElement | null>(null);
+  const [columnCount, setColumnCount] = useState(3);
+  // Aspect ratios are snapshotted per item id: later measurement improves the card itself but
+  // must not re-shuffle the column a card already sits in.
+  const aspects = useRef(new Map<string, number>());
+
+  useLayoutEffect(() => {
+    if (!container) return;
+    const measure = () => {
+      const fit = Math.floor((container.clientWidth + MASONRY_GAP) / (MASONRY_MIN_COLUMN + MASONRY_GAP));
+      const next = Math.max(1, fit);
+      setColumnCount((current) => (current === next ? current : next));
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(container);
+    return () => observer.disconnect();
+  }, [container]);
+
+  const columns = useMemo(() => {
+    const buckets: LibraryItemSummary[][] = Array.from({ length: columnCount }, () => []);
+    const heights = new Array<number>(columnCount).fill(0);
+    for (const item of items) {
+      let target = 0;
+      for (let index = 1; index < columnCount; index += 1) {
+        if (heights[index] < heights[target]) target = index;
+      }
+      buckets[target].push(item);
+      const known = aspects.current.get(item.id);
+      const aspect = known ?? estimateCoverAspect(item);
+      if (known == null) aspects.current.set(item.id, aspect);
+      heights[target] += 1 / aspect + MASONRY_FOOTER_RATIO + MASONRY_GAP / MASONRY_MIN_COLUMN;
+    }
+    return buckets;
+  }, [items, columnCount]);
+
+  return { setContainer, columns };
+}
+
 export function LibraryPane({
   sidebarCollapsed,
   sidebarCompact,
@@ -71,6 +131,7 @@ export function LibraryPane({
   const lib = useLibrary();
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [connectOpen, setConnectOpen] = useState(false);
+  const [extensionOpen, setExtensionOpen] = useState(false);
   const [importFile, setImportFile] = useState<File | null>(null);
   const [confirmClear, setConfirmClear] = useState(false);
   const [dragging, setDragging] = useState(false);
@@ -81,6 +142,8 @@ export function LibraryPane({
     () => lib.items.find((item) => item.id === selectedId) ?? null,
     [lib.items, selectedId],
   );
+  // Empty while loading so the skeleton gets the same column geometry as the real grid.
+  const masonry = useMasonry(lib.loading ? [] : lib.items);
 
   const platformOptions = useMemo(() => ([
     { key: 'all' as const, label: t('library.allPlatforms'), count: lib.counts.all },
@@ -164,6 +227,21 @@ export function LibraryPane({
         </h3>
 
         <div className="ml-auto flex shrink-0 items-center gap-1">
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                aria-label={t('library.ext.aria')}
+                className="text-muted-foreground hover:text-foreground"
+                onClick={() => setExtensionOpen(true)}
+              >
+                <Download className="size-4" aria-hidden="true" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom">{t('library.ext.aria')}</TooltipContent>
+          </Tooltip>
           <Tooltip>
             <TooltipTrigger asChild>
               <Button
@@ -324,12 +402,19 @@ export function LibraryPane({
 
       <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-8 [scrollbar-width:thin]">
         {lib.loading ? (
-          <div className="grid grid-cols-[repeat(auto-fill,minmax(150px,1fr))] gap-x-3 gap-y-5 pt-1">
-            {Array.from({ length: 12 }).map((_, index) => (
-              <div key={index} className="animate-pulse">
-                <div className="aspect-[3/4] rounded-xl bg-secondary/70" />
-                <div className="mt-2 h-3 w-5/6 rounded bg-secondary/70" />
-                <div className="mt-1.5 h-2.5 w-1/2 rounded bg-secondary/50" />
+          <div ref={masonry.setContainer} className="flex items-start gap-5 pt-1">
+            {masonry.columns.map((_, columnIndex) => (
+              <div key={columnIndex} className="flex min-w-0 flex-1 flex-col gap-5">
+                {SKELETON_ASPECTS.map((_, index) => (
+                  <div key={index} className="animate-pulse">
+                    <div
+                      className="rounded-xl bg-secondary/70"
+                      style={{ aspectRatio: SKELETON_ASPECTS[(columnIndex + index) % SKELETON_ASPECTS.length] }}
+                    />
+                    <div className="mt-2 h-3 w-5/6 rounded bg-secondary/70" />
+                    <div className="mt-1.5 h-2.5 w-1/2 rounded bg-secondary/50" />
+                  </div>
+                ))}
               </div>
             ))}
           </div>
@@ -346,11 +431,15 @@ export function LibraryPane({
               {t('library.onboardingDesc')}
             </p>
             <div className="mt-5 flex flex-wrap items-center justify-center gap-2">
-              <Button type="button" size="sm" className="gap-1.5" onClick={() => setConnectOpen(true)}>
+              <Button type="button" size="sm" className="gap-1.5" onClick={() => setExtensionOpen(true)}>
+                <Download className="size-3.5" aria-hidden="true" />
+                {t('library.ext.cta')}
+              </Button>
+              <Button type="button" size="sm" variant="outline" className="gap-1.5" onClick={() => setConnectOpen(true)}>
                 <Plug className="size-3.5" aria-hidden="true" />
                 {t('library.connectAria')}
               </Button>
-              <Button type="button" size="sm" variant="outline" className="gap-1.5" onClick={() => fileInputRef.current?.click()}>
+              <Button type="button" size="sm" variant="ghost" className="gap-1.5" onClick={() => fileInputRef.current?.click()}>
                 <Upload className="size-3.5" aria-hidden="true" />
                 {t('library.onboardingImport')}
               </Button>
@@ -388,9 +477,13 @@ export function LibraryPane({
           </div>
         ) : (
           <>
-            <div className="grid grid-cols-[repeat(auto-fill,minmax(150px,1fr))] gap-x-3 gap-y-5 pt-1">
-              {lib.items.map((item) => (
-                <LibraryItemCard key={item.id} item={item} onOpen={() => setSelectedId(item.id)} />
+            <div ref={masonry.setContainer} className="flex items-start gap-5 pt-1">
+              {masonry.columns.map((column, columnIndex) => (
+                <div key={columnIndex} className="flex min-w-0 flex-1 flex-col gap-5">
+                  {column.map((item) => (
+                    <LibraryItemCard key={item.id} item={item} onOpen={() => setSelectedId(item.id)} />
+                  ))}
+                </div>
               ))}
             </div>
             {lib.hasMore && (
@@ -420,6 +513,14 @@ export function LibraryPane({
         </div>
       )}
 
+      <LibraryExtensionDialog
+        open={extensionOpen}
+        onClose={() => setExtensionOpen(false)}
+        onConnect={() => {
+          setExtensionOpen(false);
+          setConnectOpen(true);
+        }}
+      />
       <LibraryConnectDialog open={connectOpen} onClose={() => setConnectOpen(false)} />
       <LibraryImportDialog
         file={importFile}

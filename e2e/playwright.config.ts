@@ -53,6 +53,6 @@ export default defineConfig({
     timeout: 180_000,
     stdout: 'ignore',
     stderr: 'pipe',
-    env: { NEXT_TELEMETRY_DISABLED: '1', PORT: String(WEB_PORT) },
+    env: { NEXT_TELEMETRY_DISABLED: '1', PORT: String(WEB_PORT), NEXT_DIST_DIR: '.next-e2e' },
   },
 });

@@ -29,7 +29,43 @@ const MAX_PARALLEL_DOWNLOADS = 2;
 const RETRY_DELAY_MS = 1000;
 const DOWNLOAD_TIMEOUT_MS = 10 * 60_000;
 
+/** CDNs that answer a plain GET with 401/403/412 but stream fine with a byte-range probe. */
+const RANGE_RETRY_STATUSES = new Set([401, 403, 412]);
+
 const USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0 Safari/537.36';
+
+/**
+ * One attempt against the CDN. Social-media video hosts are hotlink-protected: without the
+ * site's Referer/Origin they answer 403 (or a 500 HTML page), and some of them only stream
+ * when the request carries a byte range — so the caller retries with `range: true`.
+ */
+async function requestVideo(
+  target: URL,
+  signal: AbortSignal,
+  range: boolean,
+): Promise<Response> {
+  const referer = mediaReferer(target.hostname);
+  const headers: Record<string, string> = {
+    Referer: referer,
+    Origin: new URL(referer).origin,
+    'User-Agent': USER_AGENT,
+    Accept: 'video/mp4,video/*;q=0.9,*/*;q=0.8',
+    'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+  };
+  if (range) headers.Range = 'bytes=0-';
+  return fetch(target, { headers, redirect: 'follow', signal });
+}
+
+/** Turn an upstream status into something the user can act on, instead of a bare number. */
+function upstreamErrorMessage(host: string, status: number): string {
+  if (status === 401 || status === 403 || status === 412) {
+    return `视频源拒绝抓取（${host} · HTTP ${status}）：链接可能已过期，回插件重新采集这条内容`;
+  }
+  if (status === 404 || status === 410) {
+    return `视频源已失效（${host} · HTTP ${status}）：链接过期，请重新采集这条内容`;
+  }
+  return `视频源返回 HTTP ${status}（${host}）`;
+}
 
 let layout: MediaLayout | null = null;
 
@@ -302,16 +338,15 @@ async function downloadOnce(task: DownloadTask, onProgress: (ratio: number) => v
   const timeout = setTimeout(() => controller.abort(), DOWNLOAD_TIMEOUT_MS);
   const partPath = `${task.dest}.part`;
   try {
-    const response = await fetch(target, {
-      headers: {
-        Referer: mediaReferer(target.hostname),
-        'User-Agent': USER_AGENT,
-        Accept: 'video/mp4,video/*,*/*;q=0.8',
-      },
-      redirect: 'follow',
-      signal: controller.signal,
-    });
-    if (!response.ok) throw new Error(`视频源返回 ${response.status}`);
+    let response = await requestVideo(target, controller.signal, false);
+    if (!response.ok && RANGE_RETRY_STATUSES.has(response.status)) {
+      response = await requestVideo(target, controller.signal, true);
+    }
+    if (!response.ok) throw new Error(upstreamErrorMessage(target.hostname, response.status));
+    // Redirects are followed above, so re-check the host that actually serves the bytes: the
+    // allowlist is an SSRF guard and must cover the final hop too.
+    const finalUrl = response.url ? new URL(response.url) : target;
+    if (!isAllowedMediaHost(finalUrl.hostname)) throw new Error('视频源重定向到不支持的域名');
     if (!response.body) throw new Error('视频源没有返回内容');
 
     const declared = Number(response.headers.get('content-length') ?? 0);

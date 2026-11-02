@@ -13,6 +13,7 @@ import { registerConversationRoutes } from './routes/conversations.js';
 import { registerAppConfigRoutes } from './routes/app-config.js';
 import { registerWorkspaceRoutes } from './routes/workspaces.js';
 import { registerSystemRoutes } from './routes/system.js';
+import { registerExtensionRoutes } from './routes/extension.js';
 import { registerProjectRoutes } from './routes/projects.js';
 import { registerLibraryRoutes } from './routes/library.js';
 import { openDatabase, getDefaultDbPath } from './db.js';
@@ -40,7 +41,7 @@ export function createRemixclipApp(
 
   // Only accept browser requests from same-origin or the local web dev server; arbitrary
   // pages must not be able to authorize directories / start agents.
-  // Browser extensions may access only the library namespace (pairing + import + media);
+  // Browser extensions may access only the library namespace (presence + import + media);
   // all other APIs are still rejected.
   app.use((req: Request, res: Response, next: NextFunction) => {
     const origin = req.get('origin');
@@ -53,7 +54,7 @@ export function createRemixclipApp(
         res.setHeader('Access-Control-Allow-Origin', origin);
         res.setHeader('Vary', 'Origin');
         res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
-        res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Remixclip-Token');
+        res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
         if (req.method === 'OPTIONS') { res.status(204).end(); return; }
         next();
         return;
@@ -84,7 +85,7 @@ export function createRemixclipApp(
       res.setHeader('Vary', 'Origin');
     }
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Remixclip-Token');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
     if (req.method === 'OPTIONS') { res.status(204).end(); return; }
     next();
   });
@@ -110,6 +111,7 @@ export function createRemixclipApp(
   registerRunsRoutes(app, runManager, db, dataDir ?? path.join(__dirname, '..', '..', DATA_DIR_NAME));
   registerWorkspaceRoutes(app, dataDir ?? path.join(__dirname, '..', '..', DATA_DIR_NAME), db);
   registerSystemRoutes(app);
+  registerExtensionRoutes(app);
   registerConversationRoutes(app, db, runManager);
   registerAppConfigRoutes(app);
   registerProjectRoutes(app, db, dataDir ?? path.join(__dirname, '..', '..', DATA_DIR_NAME), runManager);

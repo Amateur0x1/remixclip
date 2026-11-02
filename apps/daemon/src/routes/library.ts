@@ -1,11 +1,13 @@
 /**
- * [INPUT]: extension import requests, library query params, device pairing requests, remote CDN
- *   image/video URLs and local media paths.
- * [OUTPUT]: library REST endpoints, video download/query/delete, remote media proxy with referer and
- *   local media proxy.
+ * [INPUT]: extension import/heartbeat requests, library query params, remote CDN image/video URLs
+ *   and local media paths.
+ * [OUTPUT]: library REST endpoints (connection info, import, queries, video, proxy).
  * [POS]: daemon's library HTTP boundary; inputs always pass through the zod schemas in contracts
  *   first, and the media proxy only allows known social-media CDNs and dataDir/media/ (anti-SSRF /
  *   path traversal).
+ *
+ * Connections are port-based: the extension probes this daemon, stores the port that answered and
+ * greets us. There is no pairing window, token or device approval.
  */
 import type { Express, Request, Response } from 'express';
 import type Database from 'better-sqlite3';
@@ -14,29 +16,32 @@ import { createReadStream, createWriteStream, existsSync, mkdirSync, readFileSyn
 import { Readable, Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import path from 'node:path';
-import type { LibraryListQuery, LibraryPairingInfo } from '@remixclip/contracts';
+import type {
+  LibraryConnectionInfo,
+  LibraryGreetResponse,
+  LibraryItem,
+  LibraryListQuery,
+  MediaFile,
+} from '@remixclip/contracts';
 import {
   libraryCompareRequestSchema,
+  libraryGreetRequestSchema,
   libraryImportRequestSchema,
   libraryListQuerySchema,
   libraryMediaQuerySchema,
-  libraryPairRequestSchema,
 } from '@remixclip/contracts';
 import {
-  authenticateDevice,
   clearLibraryItems,
   deleteLibraryItem,
   getLibraryItem,
+  greetCompanion,
   importLibraryItems,
   initLibrary,
   isAllowedMediaHost,
-  listDevices,
+  listCompanions,
   listLibraryBatches,
   listLibraryItems,
   mediaReferer,
-  openAutoPairWindow,
-  pairDeviceAuto,
-  removeDevice,
 } from '../library/store.js';
 import { resolveFfmpeg } from '../library/ffmpeg.js';
 import {
@@ -68,10 +73,21 @@ function pickVideoUrl(item: { videoUrl?: string; videoUrls?: string[] }): string
   return candidates.find((url): url is string => Boolean(url && /^https?:\/\//i.test(url)));
 }
 
-function requestToken(req: Request): string {
-  const header = req.get('authorization') ?? '';
-  if (header.toLowerCase().startsWith('bearer ')) return header.slice(7).trim();
-  return (req.get('x-remixclip-token') ?? '').trim();
+/**
+ * Enqueue through one guard: a synchronous throw inside the route used to surface as Express'
+ * HTML 500 page, so the UI could only show "下载视频失败: HTTP 500" with no reason.
+ */
+function safeEnqueue(
+  db: Database.Database,
+  item: LibraryItem,
+  url: string,
+): MediaFile | null {
+  try {
+    return enqueueVideoDownload(db, item, url);
+  } catch (error) {
+    console.error(`[remixclip] 创建下载任务失败 ${item.id}: ${error instanceof Error ? error.message : String(error)}`);
+    return null;
+  }
 }
 
 /**
@@ -96,15 +112,6 @@ function isExtensionOrigin(origin: string): boolean {
   return origin.startsWith('chrome-extension://') || origin.startsWith('moz-extension://');
 }
 
-/** Extension imports must carry a pairing token; same-origin web / local curl imports do not. */
-function requireDevice(req: Request, res: Response): boolean {
-  const origin = req.get('origin') ?? '';
-  if (!isExtensionOrigin(origin)) return true;
-  if (authenticateDevice(requestToken(req))) return true;
-  res.status(401).json({ error: '未配对：请在 RemixClip 素材库中点击「连接插件」后再试' });
-  return false;
-}
-
 export function registerLibraryRoutes(app: Express, dataDir: string, db: Database.Database): void {
   initLibrary(dataDir);
   initMediaStorage(dataDir);
@@ -115,58 +122,45 @@ export function registerLibraryRoutes(app: Express, dataDir: string, db: Databas
     res.json({ ok: true, app: 'remixclip' });
   });
 
-  // ── Pairing ─────────────────────────────────────────────────────────────
-  // The app's connect dialog reads this: the endpoint to point the extension at, plus the
-  // devices that already hold a token (so the list refreshes while the dialog is open).
-  app.get('/api/library/pairing', (req: Request, res: Response) => {
-    const info: LibraryPairingInfo = {
+  // ── Connection ──────────────────────────────────────────────────────────
+  // Port-only by design: the extension probes /api/library/ping, remembers the port that answered
+  // and greets us. No pairing window, no token, no device approval — the extension-origin check
+  // (plus loopback binding) is the security boundary.
+  app.get('/api/library/connection', (req: Request, res: Response) => {
+    const info: LibraryConnectionInfo = {
       endpoint: endpointFor(req),
-      devices: listDevices(),
+      port: req.socket.localPort ?? null,
+      companions: listCompanions(),
     };
     res.json(info);
   });
 
-  // Opened by the app (never by the extension): lets the extension pair for the next 2 minutes.
-  app.post('/api/library/pair-window', (req: Request, res: Response) => {
-    if (isExtensionOrigin(req.get('origin') ?? '')) {
-      res.status(403).json({ error: '请先在 RemixClip 素材库中开启自动连接' });
+  // Heartbeat from the side panel. It carries no secret; it only lets the app show "connected"
+  // and prove that the port the user typed in the extension actually reaches this daemon.
+  app.post('/api/library/greet', (req: Request, res: Response) => {
+    // Browsers always attach Origin to a cross-origin POST; a missing one means curl/local tooling.
+    // Reject only a *web page* heartbeat — the payload is a display name with no authority.
+    const origin = req.get('origin') ?? '';
+    if (origin && !isExtensionOrigin(origin)) {
+      res.status(403).json({ error: '心跳只能由浏览器插件发送' });
       return;
     }
-    res.json({ expiresAt: openAutoPairWindow() });
-  });
-
-  // Pairing is extension-only and only inside the window the user just opened: a web page
-  // cannot set this Origin header, and there is no code to guess or leak.
-  app.post('/api/library/pair', (req: Request, res: Response) => {
-    if (!isExtensionOrigin(req.get('origin') ?? '')) {
-      res.status(403).json({ error: '配对只能由浏览器插件发起' });
-      return;
-    }
-    const parsed = libraryPairRequestSchema.safeParse(req.body ?? {});
+    const parsed = libraryGreetRequestSchema.safeParse(req.body ?? {});
     if (!parsed.success) {
-      res.status(400).json({ error: firstIssueMessage(parsed.error, '配对请求不合法') });
+      res.status(400).json({ error: firstIssueMessage(parsed.error, '心跳请求不合法') });
       return;
     }
-    const device = pairDeviceAuto(parsed.data.client);
-    if (!device) {
-      res.status(400).json({ error: '连接窗口未开启或已过期：请在 RemixClip 素材库中点击「连接插件」' });
-      return;
-    }
-    res.json({ token: device.token, device, endpoint: endpointFor(req) });
-  });
-
-  app.delete('/api/library/devices/:id', (req: Request, res: Response) => {
-    const removed = removeDevice(String(req.params.id ?? ''));
-    if (!removed) {
-      res.status(404).json({ error: '设备不存在' });
-      return;
-    }
-    res.json({ ok: true });
+    greetCompanion(parsed.data.client);
+    const body: LibraryGreetResponse = {
+      ok: true,
+      endpoint: endpointFor(req),
+      port: req.socket.localPort ?? null,
+    };
+    res.json(body);
   });
 
   // ── Import ──────────────────────────────────────────────────────────────
   app.post('/api/library/import', (req: Request, res: Response) => {
-    if (!requireDevice(req, res)) return;
     const parsed = libraryImportRequestSchema.safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({ error: firstIssueMessage(parsed.error, '导入内容必须是 JSON 对象') });
@@ -258,7 +252,11 @@ export function registerLibraryRoutes(app: Express, dataDir: string, db: Databas
       res.status(503).json({ error: 'ffmpeg 不可用' });
       return;
     }
-    const media = enqueueVideoDownload(db, item, url);
+    const media = safeEnqueue(db, item, url);
+    if (!media) {
+      res.status(500).json({ error: '创建下载任务失败，请重试' });
+      return;
+    }
     res.json({ media });
   });
 
@@ -437,20 +435,24 @@ export function registerLibraryRoutes(app: Express, dataDir: string, db: Databas
       try {
         const meta = JSON.parse(readFileSync(metaPath, 'utf8')) as { type?: string; size?: number };
         const type = meta.type ?? 'application/octet-stream';
-        if ((meta.size ?? 0) <= MAX_IMAGE_CACHE_BYTES) {
-          res.setHeader('Content-Type', type);
-          res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
-          createReadStream(binPath).pipe(res);
-          return;
-        }
+if ((meta.size ?? 0) <= MAX_IMAGE_CACHE_BYTES) {
+            res.setHeader('Content-Type', type);
+            res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+            // Same reason as the upstream path: never .pipe() a stream into res unguarded.
+            await pipeline(createReadStream(binPath), res).catch(() => res.destroy());
+            return;
+          }
       } catch {
         // Corrupt cache: fall back to fetching from the source again.
       }
     }
 
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 20_000);
-    res.on('close', () => controller.abort());
+const controller = new AbortController();
+const timeout = setTimeout(() => controller.abort(), 20_000);
+res.on('close', () => {
+  // A normal response also emits 'close'; only an early disconnect should cancel the upstream.
+  if (!res.writableEnded) controller.abort();
+});
     try {
       const headers: Record<string, string> = {
         Referer: mediaReferer(target.hostname),
@@ -496,15 +498,23 @@ export function registerLibraryRoutes(app: Express, dataDir: string, db: Databas
         return;
       }
 
-      Readable.fromWeb(upstream.body as Parameters<typeof Readable.fromWeb>[0]).pipe(res);
-    } catch (error) {
-      clearTimeout(timeout);
-      if (!res.headersSent) {
-        const aborted = error instanceof Error && error.name === 'AbortError';
-        res.status(aborted ? 504 : 502).json({ error: aborted ? '媒体源超时' : '媒体拉取失败' });
-      } else {
-        res.end();
-      }
+    // pipeline() instead of .pipe(): a client that navigates away / closes the dialog aborts the
+    // upstream body, and .pipe() would emit an unhandled 'error' on the Readable — which used to
+    // take the whole daemon down (every later API call then looked like "HTTP 500").
+    await pipeline(
+      Readable.fromWeb(upstream.body as Parameters<typeof Readable.fromWeb>[0]),
+      res,
+    );
+  } catch (error) {
+    clearTimeout(timeout);
+    // The client is already gone: nothing left to answer, and the stream is destroyed.
+    if (res.destroyed || res.writableEnded) return;
+    if (!res.headersSent) {
+      const aborted = error instanceof Error && error.name === 'AbortError';
+      res.status(aborted ? 504 : 502).json({ error: aborted ? '媒体源超时' : '媒体拉取失败' });
+    } else {
+      res.destroy();
     }
+  }
   });
 }

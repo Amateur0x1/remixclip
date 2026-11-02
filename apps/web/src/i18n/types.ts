@@ -338,6 +338,10 @@ export interface Dict {
   'library.noFrame': string;
   'library.noFrames': string;
   'library.noPreviewMedia': string;
+  'library.previewExpiredDesc': string;
+  'library.previewExpiredTitle': string;
+  'library.previewFailedDesc': string;
+  'library.previewFailedTitle': string;
   'library.noShots': string;
   'library.notAnalyzed': string;
   'library.notCompared': string;
@@ -385,30 +389,48 @@ export interface Dict {
   'library.uploadAnother': string;
   'library.viewImageAria': string;
 
-  // ── library: pairing dialog ────────────────────────────────────────────
-  'library.connect.autoAction': string;
-  'library.connect.autoDesc': string;
-  'library.connect.autoDone': string;
-  'library.connect.autoExpiredHint': string;
-  'library.connect.autoOpen': string;
-  'library.connect.autoOpenHint': string;
-  'library.connect.autoReopen': string;
-  'library.connect.autoTitle': string;
-'library.connect.deviceCount': string;
-'library.connect.devices': string;
-'library.connect.desc': string;
-'library.connect.fetchFailed': string;
-'library.connect.finish': string;
-'library.connect.loopback': string;
-'library.connect.noDevices': string;
-  'library.connect.revoke': string;
-  'library.connect.revokeFailed': string;
-  'library.connect.step1Middle': string;
-  'library.connect.step1Prefix': string;
-  'library.connect.step1Suffix': string;
+  // ── library: extension connection dialog ───────────────────────────────
+  'library.connect.companions': string;
+  'library.connect.copiedEndpoint': string;
+  'library.connect.copyEndpoint': string;
+  'library.connect.desc': string;
+  'library.connect.download': string;
+  'library.connect.fetchFailed': string;
+  'library.connect.finish': string;
+  'library.connect.loopback': string;
+  'library.connect.none': string;
+  'library.connect.port': string;
+  'library.connect.portHint': string;
+  'library.connect.seen': string;
+  'library.connect.step1': string;
   'library.connect.step2': string;
   'library.connect.step3': string;
   'library.connect.title': string;
+
+  // ── library: companion download dialog ─────────────────────────────────
+  'library.ext.aria': string;
+  'library.ext.cta': string;
+  'library.ext.desc': string;
+  'library.ext.download': string;
+  'library.ext.downloaded': string;
+  'library.ext.downloadFailed': string;
+  'library.ext.downloading': string;
+  'library.ext.goConnect': string;
+  'library.ext.hint': string;
+  'library.ext.install1': string;
+  'library.ext.install2': string;
+  'library.ext.install3': string;
+  'library.ext.install4': string;
+  'library.ext.installTitle': string;
+  'library.ext.meta': string;
+  'library.ext.missing': string;
+  'library.ext.title': string;
+  'library.ext.unsupported': string;
+  'library.ext.use1': string;
+  'library.ext.use2': string;
+  'library.ext.use3': string;
+  'library.ext.use4': string;
+  'library.ext.useTitle': string;
 
   // ── library: import dialog ─────────────────────────────────────────────
   'library.import.action': string;
@@ -478,10 +500,15 @@ export interface Dict {
   'settings.agentSection': string;
   'settings.connect': string;
   'settings.connected': string;
+  'settings.copyEndpoint': string;
+  'settings.daemonHint': string;
+  'settings.daemonPort': string;
+  'settings.daemonSection': string;
   'settings.description': string;
   'settings.modelFor': string;
   'settings.modelPlaceholder': string;
   'settings.needsLogin': string;
+  'settings.refresh': string;
   'settings.title': string;
 
   // ── errors (failures produced by the frontend; errors returned by the daemon pass through as-is and are not listed here) ──
@@ -508,10 +535,13 @@ export interface Dict {
   'errors.createRun': string;
   'errors.createRunHttp': string;
   'errors.daemonHttp': string;
+  'errors.daemonInfo': string;
+  'errors.daemonInfoHttp': string;
   'errors.deleteConversation': string;
   'errors.deleteConversationHttp': string;
-  'errors.deviceRevoke': string;
-  'errors.deviceRevokeLabel': string;
+  'errors.extensionDownloadHttp': string;
+  'errors.extensionInfoHttp': string;
+  'errors.backendUnavailable': string;
   'errors.httpSuffix': string;
   'errors.libraryClear': string;
   'errors.libraryClearLabel': string;
@@ -530,8 +560,8 @@ export interface Dict {
   'errors.mediaListLabel': string;
   'errors.mediaListRead': string;
   'errors.notJson': string;
-  'errors.pairingFetch': string;
-  'errors.pairingLabel': string;
+  'errors.connectionFetch': string;
+  'errors.connectionLabel': string;
   'errors.readFile': string;
   'errors.renderLabel': string;
   'errors.renderUpload': string;

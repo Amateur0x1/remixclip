@@ -103,16 +103,16 @@ pnpm --filter @remixclip/desktop build
 pnpm tools-dev
 ```
 
-桌面窗口会自动打开。开发态 UI 在 <http://127.0.0.1:7457>，daemon 托管的生产 UI 在 <http://127.0.0.1:7456>。
+桌面窗口会自动打开。`tools-dev` 每次运行都会为 daemon 和 web dev server 各分配一个空闲回环端口并打印出来（`[tools-dev] ports — daemon …, web …`）；桌面窗口加载打印出的 web 地址，`/api/*` 由 web 服务端代理到 daemon，所以浏览器不需要知道 daemon 端口。手动启动 daemon 或 `next dev` 时仍回退到 7456/7457。
 
 ## 开发命令
 
 ```bash
 pnpm tools-dev                  # 启动 daemon + web + desktop
-pnpm tools-dev start daemon     # 只启动 daemon（7456）
-pnpm tools-dev start web        # 只启动 web dev server（7457）
+pnpm tools-dev start daemon     # 只启动 daemon（自动分配端口并打印）
+pnpm tools-dev start web        # 只启动 web，自动加入正在运行的 daemon 端口
 pnpm tools-dev start desktop    # 只启动 Electron
-pnpm tools-dev status           # 进程状态（基于 argv 发现）
+pnpm tools-dev status           # 进程状态（argv 发现 + IPC 实时 URL）
 pnpm tools-dev logs daemon      # 跟踪日志（--lines 100）
 pnpm tools-dev check            # 快速诊断
 pnpm tools-dev stop             # 按进程组停止全部
@@ -155,7 +155,7 @@ pnpm extension:dev     # CRXJS 开发态（HMR）
 `pnpm tools-dev logs daemon` 看日志，`pnpm tools-dev check` 做诊断。
 
 **端口被占用？**
-daemon 默认 7456、web dev 默认 7457；用 `pnpm tools-dev run web --daemon-port 17456 --web-port 17573`，daemon 也接受 `--port` 与 `OD_PORT`。
+`tools-dev` 每次都会自动分配空闲端口，只有用 `--daemon-port`/`--web-port` 手动固定端口时才可能撞车。要么同时指定（`pnpm tools-dev run web --daemon-port 17456 --web-port 17573`），要么去掉参数；手动启动 daemon 仍是 7456，`next dev` 仍是 `PORT`/7457。
 
 ## 致谢
 

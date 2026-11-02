@@ -8,8 +8,10 @@
  *   right side holds item info and the render pipeline.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { LibraryItem, LibraryItemSummary } from '@remixclip/contracts';
+import type { LibraryItem, LibraryItemSummary, SocialMetricKey } from '@remixclip/contracts';
+import { SOCIAL_METRIC_KEYS, socialMetricKeys, parseSocialLink } from '@remixclip/contracts';
 import {
+  AlertTriangle,
   Check,
   Download,
   ExternalLink,
@@ -31,14 +33,25 @@ import {
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { getLibraryItem, localMediaUrl, mediaUrl, platformMeta } from '@/providers/library';
+import { getLibraryItem, localMediaUrl, mediaUrl, mediaUrlExpiresAt, platformMeta } from '@/providers/library';
 import { openExternalUrl } from '@/providers/daemon';
-import { getLocale, useI18n } from '@/i18n';
+import { getLocale, useI18n, type DictKey } from '@/i18n';
 import { cn } from '@/lib/utils';
 import { formatBytes, formatCount, formatDuration, formatPublishedAt, formatSeconds } from './LibraryItemCard';
 import { ShotTimeline } from './ShotTimeline';
 import { COMPARISON_STATUS_META, ComparisonBoard, scoreTone } from './ComparisonBoard';
 import { useMediaPipeline } from './useMediaPipeline';
+
+/**
+ * Metric tiles are rendered from the contracts platform schema: each platform declares which of
+ * these it surfaces and in what order, so this table only maps a key to its icon and copy.
+ */
+const METRIC_META: Record<SocialMetricKey, { icon: typeof Heart; labelKey: DictKey }> = {
+  likes: { icon: Heart, labelKey: 'library.metricLikes' },
+  collects: { icon: Star, labelKey: 'library.metricCollects' },
+  comments: { icon: MessageCircle, labelKey: 'library.metricComments' },
+  shares: { icon: Share2, labelKey: 'library.metricShares' },
+};
 
 type DetailItem = LibraryItem | LibraryItemSummary;
 type LeftTab = 'preview' | 'shots' | 'compare';
@@ -146,6 +159,9 @@ export function LibraryDetailDialog({
   }, [copied]);
 
   const platform = item ? platformMeta(item.platform) : null;
+  // Re-parse the stored link through the platform schema: the header then shows the post id the
+  // library is keyed by (BV id / note id), not whatever query string the capture carried.
+  const linked = useMemo(() => parseSocialLink(item?.pageUrl), [item?.pageUrl]);
   const images = useMemo(() => {
     if (!item) return [];
     const list = item.images.length > 0 ? item.images : item.coverUrl ? [item.coverUrl] : [];
@@ -155,6 +171,13 @@ export function LibraryDetailDialog({
   // Prefer the local source: remote direct links expire, only the persisted file is the
   // baseline for analysis / comparison.
   const videoUrl = source?.status === 'ready' ? localMediaUrl(source.path) : mediaUrl(item?.videoUrl);
+  // A signed CDN link dies on its own (`deadline` on Bilibili), and the player would just sit
+  // there black — so the preview says what happened and how to get it back instead.
+  const [previewBroken, setPreviewBroken] = useState(false);
+  const videoExpiresAt = useMemo(() => mediaUrlExpiresAt(source?.status === 'ready' ? undefined : item?.videoUrl), [source?.status, item?.videoUrl]);
+  const videoExpired = videoExpiresAt != null && videoExpiresAt <= Date.now();
+  const previewBlocked = Boolean(videoUrl) && (videoExpired || previewBroken);
+  useEffect(() => { setPreviewBroken(false); }, [videoUrl]);
   const activeShot = useMemo(
     () => shots.find((shot) => shot.index === activeShotIndex) ?? shots[0] ?? null,
     [shots, activeShotIndex],
@@ -274,7 +297,7 @@ export function LibraryDetailDialog({
 
               <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden p-3">
                 {leftTab === 'preview' && (
-                  videoUrl ? (
+                  videoUrl && !previewBlocked ? (
                     <video
                       key={videoUrl}
                       src={videoUrl}
@@ -282,7 +305,37 @@ export function LibraryDetailDialog({
                       controls
                       playsInline
                       className="m-auto max-h-full max-w-full rounded-lg bg-black"
+                      onError={() => setPreviewBroken(true)}
                     />
+                  ) : previewBlocked ? (
+                    <div className="relative m-auto flex max-h-full items-center justify-center">
+                      <img
+                        src={mediaUrl(item?.coverUrl ?? images[0])}
+                        alt={item?.title || t('library.mediaAlt')}
+                        className="max-h-[62vh] max-w-full rounded-lg object-contain opacity-40"
+                      />
+                      <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 px-6 text-center">
+                        <AlertTriangle className="size-7 text-white/70" aria-hidden="true" />
+                        <p className="text-[13px] font-medium text-white">
+                          {videoExpired ? t('library.previewExpiredTitle') : t('library.previewFailedTitle')}
+                        </p>
+                        <p className="max-w-[44ch] text-[11.5px] leading-5 text-white/55">
+                          {videoExpired ? t('library.previewExpiredDesc') : t('library.previewFailedDesc')}
+                        </p>
+                        {item?.pageUrl && (
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="secondary"
+                            className="mt-1 gap-1.5"
+                            onClick={() => void openExternalUrl(item.pageUrl!)}
+                          >
+                            <ExternalLink className="size-3.5" aria-hidden="true" />
+                            {t('library.openPost')}
+                          </Button>
+                        )}
+                      </div>
+                    </div>
                   ) : activeUrl ? (
                     <img
                       src={activeUrl}
@@ -391,29 +444,38 @@ export function LibraryDetailDialog({
                 <h2 className="text-[16px] font-semibold leading-6 text-foreground">
                   {item?.title || item?.desc?.slice(0, 80) || t('library.untitled')}
                 </h2>
-                <div className="mt-1.5 flex items-center gap-3 text-[11.5px] text-muted-foreground">
+                <div className="mt-1.5 flex flex-wrap items-center gap-2 text-[11.5px] text-muted-foreground">
                   {item?.author?.name && <span>@{item.author.name}</span>}
                   {item?.kind === 'card' && <span>{t('library.cardOnly')}</span>}
                   {item?.source && <span>{t('library.sourceFrom', { source: item.source })}</span>}
+                  {linked && (
+                    <span
+                      title={linked.canonicalUrl}
+                      className="inline-flex max-w-full items-center gap-1 truncate rounded-full bg-secondary/70 px-2 py-0.5 font-mono text-[10.5px] text-muted-foreground"
+                    >
+                      <Link2 className="size-3 shrink-0" aria-hidden="true" />
+                      <span className="truncate">{linked.remoteId}</span>
+                    </span>
+                  )}
                 </div>
               </div>
 
               <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4 [scrollbar-width:thin]">
                 <div className="grid grid-cols-4 gap-2">
-                  {[
-                    { icon: Heart, label: t('library.metricLikes'), value: item?.metrics.likes ?? 0 },
-                    { icon: Star, label: t('library.metricCollects'), value: item?.metrics.collects ?? 0 },
-                    { icon: MessageCircle, label: t('library.metricComments'), value: item?.metrics.comments ?? 0 },
-                    { icon: Share2, label: t('library.metricShares'), value: item?.metrics.shares ?? 0 },
-                  ].map(({ icon: Icon, label, value }) => (
-                    <div key={label} className="rounded-lg bg-secondary/60 px-2.5 py-2">
-                      <div className="flex items-center gap-1 text-[10.5px] text-muted-foreground">
-                        <Icon className="size-3" aria-hidden="true" />
-                        {label}
+                  {(item ? socialMetricKeys(item.platform) : SOCIAL_METRIC_KEYS).map((key) => {
+                    const { icon: Icon, labelKey } = METRIC_META[key];
+                    return (
+                      <div key={key} className="rounded-lg bg-secondary/60 px-2.5 py-2">
+                        <div className="flex items-center gap-1 text-[10.5px] text-muted-foreground">
+                          <Icon className="size-3" aria-hidden="true" />
+                          {t(labelKey)}
+                        </div>
+                        <p className="mt-0.5 text-[14px] font-semibold text-foreground">
+                          {formatCount(item?.metrics[key] ?? 0)}
+                        </p>
                       </div>
-                      <p className="mt-0.5 text-[14px] font-semibold text-foreground">{formatCount(value)}</p>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
 
                 {/* Render pipeline */}

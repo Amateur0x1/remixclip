@@ -3,7 +3,7 @@
 /**
  * [INPUT]: The extension-exported JSON file chosen by the user.
  * [OUTPUT]: Import confirmation dialog (platform inference, item stats, error hints).
- * [POS]: File import channel when unpaired; lands on the same normalization logic as live
+ * [POS]: File import channel when the extension is offline; lands on the same normalization logic as live
  *   extension pushes.
  */
 import { useEffect, useMemo, useState } from 'react';

@@ -2,9 +2,11 @@
 
 /**
  * [INPUT]: One item summary and an open-detail callback.
- * [OUTPUT]: Library grid card (cover, platform, video badge, title, author, and engagement data).
+ * [OUTPUT]: Library grid card (cover at its true aspect ratio, platform, video badge, title,
+ *           author, and engagement data) plus the shared cover-ratio helpers the masonry uses.
  * [POS]: The visual unit of the library's first screen; covers all go through the daemon media proxy.
  */
+import { useState } from 'react';
 import { ExternalLink, Heart, Play, StickyNote } from 'lucide-react';
 import type { LibraryItemSummary } from '@remixclip/contracts';
 import { mediaUrl, platformMeta } from '@/providers/library';
@@ -58,6 +60,35 @@ export function formatPublishedAt(value?: number): string {
   return date.toLocaleDateString(getLocale(), { year: 'numeric', month: 'numeric', day: 'numeric' });
 }
 
+/**
+ * Covers keep their real aspect ratio, so heights are unknown until the browser reports the
+ * natural size. Ratios are measured once per URL and remembered for the session: a re-mount
+ * or the next page then starts at the right height instead of snapping from the fallback.
+ */
+const coverAspectCache = new Map<string, number>();
+
+/** 3:4 is the most common note cover, used only until a real ratio is known. */
+const FALLBACK_COVER_ASPECT = 3 / 4;
+/** Clamp the extremes (tall screenshots / ultra-wide banners) so one item cannot dominate a column. */
+const MIN_COVER_ASPECT = 0.5;
+const MAX_COVER_ASPECT = 2.2;
+
+function clampCoverAspect(value: number): number {
+  if (!Number.isFinite(value) || value <= 0) return FALLBACK_COVER_ASPECT;
+  return Math.min(MAX_COVER_ASPECT, Math.max(MIN_COVER_ASPECT, value));
+}
+
+/**
+ * Best ratio estimate before the image loads: the video's own dimensions, a ratio measured
+ * earlier this session, or the 3:4 fallback. The masonry needs this to size columns up front.
+ */
+export function estimateCoverAspect(item: LibraryItemSummary): number {
+  if (item.width && item.height) return clampCoverAspect(item.width / item.height);
+  const cover = mediaUrl(item.coverUrl ?? item.images[0]);
+  const cached = cover ? coverAspectCache.get(cover) : undefined;
+  return cached ? clampCoverAspect(cached) : FALLBACK_COVER_ASPECT;
+}
+
 export function LibraryItemCard({
   item,
   onOpen,
@@ -70,6 +101,10 @@ export function LibraryItemCard({
   const cover = mediaUrl(item.coverUrl ?? item.images[0]);
   const isVideo = Boolean(item.videoUrl) || (item.duration ?? 0) > 0;
   const title = item.title || item.desc || translate('library.untitled');
+  const [aspect, setAspect] = useState(() => estimateCoverAspect(item));
+  // A 16:9 cover is barely ~90px tall in a 178px column, so its gradients have to be tighter
+  // than the ones a portrait cover can afford.
+  const landscape = aspect >= 1.4;
 
   return (
     <div
@@ -85,7 +120,10 @@ export function LibraryItemCard({
       }}
       className="group flex min-w-0 cursor-pointer flex-col rounded-xl outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
     >
-      <div className="relative aspect-[3/4] overflow-hidden rounded-xl bg-muted ring-1 ring-border/60">
+      <div
+        className="relative overflow-hidden rounded-xl bg-muted ring-1 ring-border/60"
+        style={{ aspectRatio: aspect }}
+      >
         {cover ? (
           <img
             src={cover}
@@ -93,6 +131,13 @@ export function LibraryItemCard({
             loading="lazy"
             draggable={false}
             className="size-full object-cover transition duration-500 group-hover:scale-[1.035]"
+            onLoad={(event) => {
+              const image = event.currentTarget;
+              if (!image.naturalWidth || !image.naturalHeight) return;
+              const next = clampCoverAspect(image.naturalWidth / image.naturalHeight);
+              if (cover) coverAspectCache.set(cover, next);
+              setAspect((current) => (Math.abs(current - next) < 0.005 ? current : next));
+            }}
             onError={(event) => { (event.currentTarget as HTMLImageElement).style.opacity = '0'; }}
           />
         ) : (
@@ -101,7 +146,12 @@ export function LibraryItemCard({
           </div>
         )}
 
-        <div className="pointer-events-none absolute inset-x-0 top-0 flex items-start justify-between gap-2 bg-gradient-to-b from-black/45 to-transparent p-2 pb-8">
+        <div
+          className={cn(
+            'pointer-events-none absolute inset-x-0 top-0 flex items-start justify-between gap-2 bg-gradient-to-b from-black/45 to-transparent p-2',
+            landscape ? 'pb-6' : 'pb-8',
+          )}
+        >
           <span className="inline-flex items-center gap-1 rounded-full bg-black/45 px-2 py-0.5 text-[10.5px] font-medium text-white backdrop-blur-sm">
             <span className="size-1.5 rounded-full" style={{ backgroundColor: platform.color }} aria-hidden="true" />
             {translate(platform.labelKey)}
@@ -119,7 +169,12 @@ export function LibraryItemCard({
           </span>
         </div>
 
-        <div className="pointer-events-none absolute inset-x-0 bottom-0 flex items-end justify-between gap-2 bg-gradient-to-t from-black/65 via-black/20 to-transparent p-2 pt-10">
+        <div
+          className={cn(
+            'pointer-events-none absolute inset-x-0 bottom-0 flex items-end justify-between gap-2 bg-gradient-to-t from-black/65 via-black/20 to-transparent p-2',
+            landscape ? 'pt-6' : 'pt-10',
+          )}
+        >
           <span className="min-w-0 truncate text-[11px] text-white/85">
             {item.author?.name ? `@${item.author.name}` : translate('library.unknownAuthor')}
           </span>
@@ -129,29 +184,30 @@ export function LibraryItemCard({
           </span>
         </div>
 
-        {item.pageUrl && (
-          <a
-            href={item.pageUrl}
-            target="_blank"
-            rel="noreferrer"
-            aria-label={translate('library.openPost')}
-            onClick={(event) => event.stopPropagation()}
-            className={cn(
-              'absolute right-2 bottom-2 flex size-7 items-center justify-center rounded-full bg-background/90 text-foreground opacity-0 shadow-sm backdrop-blur-sm transition-opacity',
-              'hover:bg-background focus-visible:opacity-100 group-hover:opacity-100',
-            )}
-          >
-            <ExternalLink className="size-3.5" aria-hidden="true" />
-          </a>
-        )}
       </div>
 
       <div className="mt-2 min-w-0 px-0.5">
         <p className="line-clamp-2 text-[13px] font-medium leading-5 text-foreground/90">{title}</p>
         <div className="mt-1 flex items-center justify-between gap-2 text-[11px] text-muted-foreground">
           <span className="truncate">{item.publishedAt ? formatPublishedAt(item.publishedAt) : translate('library.justImported')}</span>
-          <span className="shrink-0">
-            {item.capturedCommentCount > 0 ? translate('library.commentsCount', { count: item.capturedCommentCount }) : item.tags[0] ? `#${item.tags[0]}` : ''}
+          <span className="flex shrink-0 items-center gap-1.5">
+            <span className="truncate">
+              {item.capturedCommentCount > 0 ? translate('library.commentsCount', { count: item.capturedCommentCount }) : item.tags[0] ? `#${item.tags[0]}` : ''}
+            </span>
+            {/* Lives next to the metadata rather than on the cover: with real aspect ratios a
+                landscape cover is only ~90px tall and a floating button hid the like count. */}
+            {item.pageUrl && (
+              <a
+                href={item.pageUrl}
+                target="_blank"
+                rel="noreferrer"
+                aria-label={translate('library.openPost')}
+                onClick={(event) => event.stopPropagation()}
+                className="flex size-4 items-center justify-center rounded text-muted-foreground/60 opacity-0 transition-opacity hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100"
+              >
+                <ExternalLink className="size-3" aria-hidden="true" />
+              </a>
+            )}
           </span>
         </div>
       </div>

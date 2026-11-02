@@ -9,6 +9,7 @@ import { expect, test, type Page } from '@playwright/test';
 import type {
   AgentInfo,
   Conversation,
+  DaemonRuntimeInfo,
   LibraryItemSummary,
   LibraryListResponse,
   Project,
@@ -120,16 +121,28 @@ const LIBRARY_ITEMS: LibraryItemSummary[] = [
   },
 ];
 
+const RUNTIME_INFO: DaemonRuntimeInfo = {
+  pid: 4242,
+  port: 7456,
+  endpoint: 'http://127.0.0.1:7456',
+  webOrigin: 'http://127.0.0.1:7457',
+};
+
 const LIBRARY: LibraryListResponse = {
   items: LIBRARY_ITEMS,
   total: LIBRARY_ITEMS.length,
   counts: { all: 3, xhs: 1, bilibili: 1, douyin: 1 },
 };
 
-/** 1×1 placeholder image: covers come from a remote CDN, which must be replaced with
- * deterministic content in visual regression. */
-const PLACEHOLDER_SVG =
-  '<svg xmlns="http://www.w3.org/2000/svg" width="30" height="40"><rect width="30" height="40" fill="#d8d8d8"/></svg>';
+/** Covers come from a remote CDN, which must be replaced with deterministic content in visual
+ * regression. Three distinct aspect ratios keep the masonry layout inside the baseline. */
+const PLACEHOLDER_SIZES = [[30, 40], [36, 30], [40, 30]] as const;
+
+function placeholderSvg(coverUrl: string): string {
+  const index = Number(/(\d)\.jpg/.exec(coverUrl)?.[1] ?? 0) % PLACEHOLDER_SIZES.length;
+  const [width, height] = PLACEHOLDER_SIZES[index]!;
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}"><rect width="${width}" height="${height}" fill="#d8d8d8"/></svg>`;
+}
 
 interface MockOptions {
   agents?: AgentInfo[];
@@ -159,12 +172,18 @@ async function mockDaemon(page: Page, options: MockOptions = {}): Promise<void> 
       case '/api/app-config':
         // An agent is connected globally, so the first-run settings drawer stays closed.
         return route.fulfill({ json: { agentId: 'claude' } });
+      case '/api/system/info':
+        // The settings drawer prints the daemon endpoint; without this mock it renders an error.
+        return route.fulfill({ json: RUNTIME_INFO });
       case '/api/library/items':
         // Do not fulfill: the request stays pending, so the page remains on the skeleton.
         if (options.library === 'pending') return undefined;
         return route.fulfill({ json: LIBRARY });
       case '/api/library/media':
-        return route.fulfill({ contentType: 'image/svg+xml', body: PLACEHOLDER_SVG });
+        return route.fulfill({
+          contentType: 'image/svg+xml',
+          body: placeholderSvg(new URL(route.request().url()).searchParams.get('url') ?? ''),
+        });
       default:
         return route.fulfill({ status: 404, json: { error: `not mocked: ${pathname}` } });
     }
@@ -203,8 +222,8 @@ test('素材库首帧骨架屏', async ({ page }) => {
   await page.goto('/');
   await expect(page.getByRole('button', { name: '小红书爆款标题改写', exact: true })).toBeVisible();
   await page.getByRole('button', { name: '素材库', exact: true }).click();
-  // The skeleton is 12 animate-pulse placeholder cards; while the request hangs it must
-  // stay visible and never flash back to the empty state.
+  // The skeleton is one animate-pulse column of placeholders per masonry column; while the
+  // request hangs it must stay visible and never flash back to the empty state.
   await expect(page.locator('main .animate-pulse').first()).toBeVisible();
   await settle(page);
   await expectVisual(page, 'library-skeleton');

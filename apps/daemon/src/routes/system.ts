@@ -1,10 +1,13 @@
 /**
- * [INPUT]: external link in the HTTP request.
- * [OUTPUT]: /api/open-external endpoint that hands it to the system default browser.
+ * [INPUT]: the daemon's own bound socket and the external URLs the app asks to open.
+ * [OUTPUT]: /api/system/info (bound port + endpoint) and /api/open-external (system browser).
  * [POS]: daemon's system integration routes (host capability, unrelated to the chat domain).
  */
+import type { DaemonRuntimeInfo } from '@remixclip/contracts';
+import { SIDECAR_ENV } from '@remixclip/sidecar-proto';
 import type { Express, Request, Response } from 'express';
 import { spawn } from 'node:child_process';
+import { listWebOrigins } from '../web-origins.js';
 
 /** Only allow http(s), so arbitrary schemes never reach the system opener. */
 function openWithSystem(url: string): void {
@@ -20,6 +23,19 @@ function openWithSystem(url: string): void {
 }
 
 export function registerSystemRoutes(app: Express): void {
+  // The port the listener actually bound, not a declared constant: the settings drawer and the
+  // browser extension both read this so a custom or dynamically allocated port is never guessed.
+  app.get('/api/system/info', (req: Request, res: Response) => {
+    const port = req.socket.localPort ?? null;
+    const info: DaemonRuntimeInfo = {
+      pid: process.pid,
+      port,
+      endpoint: port == null ? null : `http://${req.hostname || '127.0.0.1'}:${port}`,
+      webOrigin: listWebOrigins()[0] ?? process.env[SIDECAR_ENV.WEB_ORIGIN] ?? null,
+    };
+    res.json(info);
+  });
+
   app.post('/api/open-external', (req: Request, res: Response) => {
     const url = typeof req.body?.url === 'string' ? req.body.url.trim() : '';
     let parsed: URL;

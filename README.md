@@ -104,16 +104,16 @@ pnpm --filter @remixclip/desktop build
 pnpm tools-dev
 ```
 
-The desktop window opens automatically. The dev UI is served at <http://127.0.0.1:7457>; the daemon serves the production UI at <http://127.0.0.1:7456>.
+The desktop window opens automatically. `tools-dev` allocates a free loopback port for the daemon and the web dev server on every run and prints both (`[tools-dev] ports — daemon …, web …`); the desktop window loads the printed web URL, and `/api/*` is proxied server-side to the daemon, so the browser never needs the daemon port. Running the daemon or `next dev` by hand still falls back to 7456/7457.
 
 ## Development commands
 
 ```bash
 pnpm tools-dev                  # start daemon + web + desktop
-pnpm tools-dev start daemon     # daemon only (7456)
-pnpm tools-dev start web        # web dev server only (7457)
+pnpm tools-dev start daemon     # daemon only (free port, printed)
+pnpm tools-dev start web        # web only, joins the running daemon's port
 pnpm tools-dev start desktop    # Electron only
-pnpm tools-dev status           # process status (argv-based discovery)
+pnpm tools-dev status           # process status (argv discovery + live IPC URL)
 pnpm tools-dev logs daemon      # follow logs (--lines 100)
 pnpm tools-dev check            # quick diagnostics
 pnpm tools-dev stop             # stop everything by process group
@@ -156,7 +156,7 @@ The terminal may have inherited `ELECTRON_RUN_AS_NODE=1` (VS Code terminals do t
 Run `pnpm tools-dev logs daemon` and `pnpm tools-dev check`.
 
 **A port is already in use.**
-The daemon defaults to 7456 and the web dev server to 7457. Use `pnpm tools-dev run web --daemon-port 17456 --web-port 17573`; the daemon also accepts `--port` and `OD_PORT`.
+`tools-dev` allocates free ports per run, so a collision only happens when you pin one with `--daemon-port`/`--web-port`. Set both explicitly (`pnpm tools-dev run web --daemon-port 17456 --web-port 17573`) or drop the flag; the daemon itself still defaults to 7456 and `next dev` to `PORT`/7457 when run outside `tools-dev`.
 
 ## Acknowledgements
 

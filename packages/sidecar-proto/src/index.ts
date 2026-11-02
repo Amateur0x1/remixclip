@@ -36,6 +36,9 @@ export const SIDECAR_ENV = Object.freeze({
   DAEMON_CLI_PATH: "OD_DAEMON_CLI_PATH",
   DAEMON_PORT: "OD_PORT",
   DATA_DIR: "OD_DATA_DIR",
+  // Directory of the built browser companion. tools-dev injects the built extension so the
+  // daemon can hand out a zip; without it the daemon falls back to the repo layout.
+  EXTENSION_DIR: "OD_EXTENSION_DIR",
   IPC_BASE: "OD_SIDECAR_IPC_BASE",
   IPC_PATH: "OD_SIDECAR_IPC_PATH",
   NAMESPACE: "OD_SIDECAR_NAMESPACE",
@@ -75,10 +78,11 @@ export const STAMP_SOURCE_FLAG = SIDECAR_STAMP_FLAGS.source;
 export const SIDECAR_STAMP_FIELDS = ["app", "mode", "namespace", "ipc", "source"] as const;
 
 /**
- * Canonical loopback ports for a single runtime namespace. Every consumer
- * (tools-dev, sidecar allocation, desktop fallbacks, e2e harness) must derive
- * from this table instead of hardcoding a number — a drifted literal is what
- * makes a port collision silently move the web server and strand Electron.
+ * Preferred loopback ports per app. Runtime truth is NOT this table: tools-dev
+ * allocates a concrete port per run (dynamic when no flag is given), injects it
+ * over env, and the daemon reports the bound port over sidecar IPC status. These
+ * values only seed fallbacks for manual runs (daemon CLI default, desktop when
+ * launched without tools-dev, e2e harness) so no file drifts to a new literal.
  */
 export const SIDECAR_PORTS = Object.freeze({
   base: 7456,

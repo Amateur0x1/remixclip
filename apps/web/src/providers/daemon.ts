@@ -15,6 +15,8 @@ import type {
   Conversation,
   CreateProjectResponse,
   DaemonAgentPayload,
+  DaemonRuntimeInfo,
+  ExtensionPackageInfo,
   Project,
 } from '@remixclip/contracts';
 import { t } from '@/i18n';
@@ -99,6 +101,53 @@ export async function putAppConfig(patch: Partial<AppConfigPrefs>): Promise<AppC
   });
   if (!res.ok) throw new Error(t('errors.appConfigPutHttp', { status: res.status }));
   return (await res.json()) as AppConfigPrefs;
+}
+
+// ── System info ────────────────────────────────────────────────────────────
+
+/** The port the daemon actually bound, so settings can show and copy the live endpoint. */
+export async function fetchDaemonInfo(): Promise<DaemonRuntimeInfo> {
+  const res = await fetch('/api/system/info', { cache: 'no-store' });
+  if (!res.ok) throw new Error(t('errors.daemonInfoHttp', { status: res.status }));
+  return (await res.json()) as DaemonRuntimeInfo;
+}
+
+// ── Browser companion package ──────────────────────────────────────────────
+
+/** Build metadata, so the dialog never offers a download that would 404. */
+export async function fetchExtensionInfo(): Promise<ExtensionPackageInfo> {
+  const res = await fetch('/api/system/extension', { cache: 'no-store' });
+  if (!res.ok) throw new Error(t('errors.extensionInfoHttp', { status: res.status }));
+  return (await res.json()) as ExtensionPackageInfo;
+}
+
+/** `attachment; filename="x.zip"` → `x.zip`, ignoring a path a server might sneak in. */
+function fileNameFromDisposition(value: string | null): string | null {
+  const match = value?.match(/filename="?([^"\\/]+)"?/i);
+  return match?.[1] ?? null;
+}
+
+/**
+ * Download the packaged companion as a file. Going through fetch instead of an `<a href>` lets
+ * the dialog say "not built yet" instead of leaving the user with a silent 404 tab.
+ */
+export async function downloadExtensionPackage(): Promise<string> {
+  const res = await fetch('/api/system/extension/package', { cache: 'no-store' });
+  if (res.status === 404) throw new Error(t('library.ext.missing'));
+  if (!res.ok) throw new Error(t('errors.extensionDownloadHttp', { status: res.status }));
+  const blob = await res.blob();
+  const fileName = fileNameFromDisposition(res.headers.get('content-disposition')) ?? 'remixclip-companion.zip';
+  const url = URL.createObjectURL(blob);
+  try {
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = fileName;
+    anchor.click();
+  } finally {
+    // Revoking immediately can cancel the navigation in Safari; one macrotask is enough.
+    setTimeout(() => URL.revokeObjectURL(url), 0);
+  }
+  return fileName;
 }
 
 // ── Projects ───────────────────────────────────────────────────────────────

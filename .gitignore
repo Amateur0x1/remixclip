@@ -4,7 +4,8 @@ node_modules/
 
 # Build outputs
 dist/
-.next/
+# Next output dir: `.next` plus every NEXT_DIST_DIR variant (.next-e2e, .next-smoke, ...)
+.next*/
 out/
 *.tsbuildinfo
 

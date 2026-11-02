@@ -1,6 +1,6 @@
 /**
- * [INPUT]: the daemon's library REST API and the extension pairing protocol.
- * [OUTPUT]: typed library queries, imports, deletions, pairing and media proxy URLs (every
+ * [INPUT]: the daemon's library REST API.
+ * [OUTPUT]: typed library queries, imports, deletions, connection info and media proxy URLs (every
  *           response goes through its zod schema).
  * [POS]: the web library client; all remote media goes through the same-origin proxy.
  */
@@ -10,12 +10,12 @@ import type {
   LibraryCompareRequest,
   LibraryCompareResponse,
   LibraryComparisonListResponse,
+  LibraryConnectionInfo,
   LibraryImportRequest,
   LibraryImportResult,
   LibraryItem,
   LibraryListQuery,
   LibraryListResponse,
-  LibraryPairingInfo,
   LibraryOkResponse,
   LibraryShotsResponse,
   MediaFile,
@@ -26,21 +26,24 @@ import {
   libraryCompareResponseSchema,
   libraryComparisonListResponseSchema,
   libraryComparisonResponseSchema,
+  libraryConnectionInfoSchema,
   libraryImportResultSchema,
   libraryItemResponseSchema,
   libraryListResponseSchema,
   libraryMediaFileResponseSchema,
   libraryMediaListResponseSchema,
   libraryOkResponseSchema,
-  libraryPairingInfoSchema,
-  libraryPairWindowSchema,
   libraryShotsResponseSchema,
 } from '@remixclip/contracts';
 import { t, type DictKey } from '@/i18n';
 
 async function readError(res: Response, fallback: DictKey): Promise<string> {
   const body = (await res.json().catch(() => null)) as { error?: string } | null;
-  return body?.error ?? t('errors.httpSuffix', { fallback: t(fallback), status: res.status });
+  if (body?.error) return body.error;
+  const suffix = t('errors.httpSuffix', { fallback: t(fallback), status: res.status });
+  // A 5xx without a JSON error means the request never reached the daemon (proxy/daemon down);
+  // "HTTP 500" on its own reads like a CDN failure and sends people hunting the wrong thing.
+  return res.status >= 500 ? `${suffix} · ${t('errors.backendUnavailable')}` : suffix;
 }
 
 /**
@@ -114,28 +117,14 @@ export async function importLibraryPayload(payload: LibraryImportRequest): Promi
   return parseBody(libraryImportResultSchema, await readJson(res, 'errors.libraryImport'), 'errors.libraryImportLabel');
 }
 
-export async function fetchPairing(): Promise<LibraryPairingInfo> {
-const res = await fetch('/api/library/pairing');
-if (!res.ok) throw new Error(await readError(res, 'errors.pairingFetch'));
-return parseBody(libraryPairingInfoSchema, await readJson(res, 'errors.pairingFetch'), 'errors.pairingLabel');
-}
-
 /**
- * Open the 2-minute window in which the browser extension may pair without typing a code.
- * The user clicks the button, so consent is explicit; the daemon enforces the TTL and that the
- * pairing request carries a chrome-extension origin.
+ * The daemon's bound port plus the companions that greeted it recently. There is no pairing step:
+ * the extension only needs the port, and its heartbeat proves the port reached this daemon.
  */
-export async function openPairWindow(): Promise<number> {
-const res = await fetch('/api/library/pair-window', { method: 'POST' });
-if (!res.ok) throw new Error(await readError(res, 'errors.pairingFetch'));
-const body = parseBody(libraryPairWindowSchema, await readJson(res, 'errors.pairingFetch'), 'errors.pairingLabel');
-return body.expiresAt;
-}
-
-export async function revokeDevice(id: string): Promise<void> {
-  const res = await fetch(`/api/library/devices/${encodeURIComponent(id)}`, { method: 'DELETE' });
-  if (!res.ok) throw new Error(await readError(res, 'errors.deviceRevoke'));
-  parseBody(libraryOkResponseSchema, await readJson(res, 'errors.deviceRevoke'), 'errors.deviceRevokeLabel');
+export async function fetchConnection(): Promise<LibraryConnectionInfo> {
+const res = await fetch('/api/library/connection');
+if (!res.ok) throw new Error(await readError(res, 'errors.connectionFetch'));
+return parseBody(libraryConnectionInfoSchema, await readJson(res, 'errors.connectionFetch'), 'errors.connectionLabel');
 }
 
 /** Social CDNs need a referer, so this always goes through the daemon proxy; empty URLs pass through. */
@@ -144,6 +133,28 @@ export function mediaUrl(url: string | undefined): string | undefined {
   if (url.startsWith('/')) return url;
   if (!/^https?:\/\//i.test(url)) return undefined;
   return `/api/library/media?url=${encodeURIComponent(url)}`;
+}
+
+/**
+ * Signed social-media URLs carry their own expiry (`deadline` on Bilibili, `expire` on Douyin).
+ * Reading it lets the preview say "expired, capture it again" instead of rendering a dead player.
+ * Returns null when the URL is unsigned or the parameter is not a plausible epoch second.
+ */
+export function mediaUrlExpiresAt(url: string | undefined): number | null {
+  if (!url) return null;
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return null;
+  }
+  for (const key of ['deadline', 'expire', 'expires', 'x-expires']) {
+    const raw = parsed.searchParams.get(key);
+    if (!raw || !/^\d+$/.test(raw)) continue;
+    const value = Number(raw);
+    if (value > 1_000_000_000 && value < 100_000_000_000) return value * 1000;
+  }
+  return null;
 }
 
 // ── local video / shot analysis / pixel comparison ───────────────────────

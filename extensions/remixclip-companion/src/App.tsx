@@ -2,7 +2,7 @@
 // Copyright 2026 RemixClip
 // Vendored from social-media-sniffer@0a68863 (extension/), modified for RemixClip.
 
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import {
   loadData,
   type SnifferData,
@@ -11,16 +11,16 @@ import {
 } from "./store/sniffer-store";
 import type { PlatformKey } from "./types/common";
 import {
-  DEFAULT_REMIXCLIP_ENDPOINT,
-  clearRemixclipConfig,
+  DEFAULT_REMIXCLIP_PORT,
+  detectRemixclip,
+  greetRemixclip,
   loadRemixclipConfig,
-  pairRemixclipAuto,
+  parsePort,
   pingRemixclip,
+  portCandidates,
   saveRemixclipConfig,
   sendToRemixclip,
-  type RemixclipConfig,
   type RemixclipExportPayload,
-  type RemixclipPairResult,
 } from "./lib/remixclip";
 
 // ── Platform definitions ──
@@ -49,6 +49,8 @@ type TabKey = "explore" | "user";
 
 function App() {
   const [platform, setPlatform] = useState<PlatformKey>("xhs");
+  /** Rail hover: inline styles cannot express :hover, and the tile tint must not fight the selected state. */
+  const [hoveredPlatform, setHoveredPlatform] = useState<PlatformKey | null>(null);
   const [data, setData] = useState<SnifferData | null>(null);
   const [tab, setTab] = useState<TabKey>("explore");
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -57,31 +59,19 @@ function App() {
   /** Creator currently expanded in the user tab */
   const [expandedUser, setExpandedUser] = useState<string | null>(null);
 
-  // ── RemixClip binding ──
-  const [bridge, setBridge] = useState<RemixclipConfig>({ endpoint: DEFAULT_REMIXCLIP_ENDPOINT, token: "" });
-  const [endpointDraft, setEndpointDraft] = useState(DEFAULT_REMIXCLIP_ENDPOINT);
-  const [bridgeOpen, setBridgeOpen] = useState(false);
-  const [bridgeOnline, setBridgeOnline] = useState<boolean | null>(null);
-  const [bridgeBusy, setBridgeBusy] = useState(false);
-  const [bridgeError, setBridgeError] = useState("");
-  const [endpointOpen, setEndpointOpen] = useState(false);
+  // ── RemixClip connection (port only) ──
+  const [port, setPort] = useState<number | null>(null);
+  const [portDraft, setPortDraft] = useState(String(DEFAULT_REMIXCLIP_PORT));
+  const [linkStatus, setLinkStatus] = useState<"checking" | "online" | "offline">("checking");
+  const [linkOpen, setLinkOpen] = useState(false);
+  const [linkError, setLinkError] = useState("");
+  const [checking, setChecking] = useState(false);
   const [sending, setSending] = useState(false);
   const [sendStatus, setSendStatus] = useState("");
-
-  /** Shared tail of every pairing path: remember the token, flip the UI to "connected". */
-  const applyPair = useCallback(async (result: RemixclipPairResult, fallbackEndpoint: string) => {
-    const next: RemixclipConfig = {
-      endpoint: result.endpoint || fallbackEndpoint,
-      token: result.token,
-      deviceName: result.device.name,
-      pairedAt: Date.now(),
-    };
-    await saveRemixclipConfig(next);
-    setBridge(next);
-    setEndpointDraft(next.endpoint);
-    setBridgeOnline(true);
-    return next;
-  }, []);
+  /** Last port that answered; callbacks read the ref so they never close over a stale value. */
+  const portRef = useRef<number | null>(null);
+  /** The blocking prompt is shown once per offline episode, so 「先离线使用」 actually sticks. */
+  const promptedRef = useRef(false);
 
   const activePlatform = PLATFORMS.find((p) => p.key === platform)!;
 
@@ -94,21 +84,94 @@ function App() {
     }
   }, [platform]);
 
+  /**
+   * The whole "connection" flow: try the remembered port, then the defaults. No handshake, no
+   * token — the daemon answering on a port is the connection.
+   */
+  const checkConnection = useCallback(async (options: { prompt?: boolean; announce?: boolean } = {}) => {
+    setChecking(true);
+    setLinkStatus("checking");
+    setLinkError("");
+    const found = await detectRemixclip(portRef.current);
+    setChecking(false);
+    if (found == null) {
+      setLinkStatus("offline");
+      if (options.prompt && !promptedRef.current) {
+        promptedRef.current = true;
+        setLinkOpen(true);
+      }
+      if (options.announce) {
+        setSendStatus(`没有检测到 RemixClip（已试 ${portCandidates(portRef.current).join(" / ")}）`);
+      }
+      return null;
+    }
+    portRef.current = found;
+    setPort(found);
+    setPortDraft(String(found));
+    setLinkStatus("online");
+    setLinkError("");
+    promptedRef.current = false;
+    await saveRemixclipConfig({ port: found });
+    void greetRemixclip(found);
+    if (options.announce) setSendStatus(`已连接 RemixClip（127.0.0.1:${found}）`);
+    return found;
+  }, []);
+
+  // Every panel open (the side panel mounts on open) probes the daemon once; a miss opens the
+  // blocking port prompt instead of letting 「发送」 fail later with a generic network error.
   useEffect(() => {
     void loadRemixclipConfig().then(async (config) => {
-      setBridge(config);
-      setEndpointDraft(config.endpoint);
-      if (config.token) return;
-      // Opening the panel is enough after the user clicks 「开启自动连接」 in the app: try silently.
-      if (!(await pingRemixclip(config.endpoint))) return;
-      try {
-        await applyPair(await pairRemixclipAuto(config.endpoint), config.endpoint);
-        setSendStatus("已连接 RemixClip，之后的导出会直接进入素材库");
-      } catch {
-        // No trust window open yet — the connect panel explains how to open one.
-      }
+      portRef.current = config.port;
+      setPortDraft(String(config.port));
+      await checkConnection({ prompt: true });
     });
-  }, [applyPair]);
+  }, [checkConnection]);
+
+  // Coming back to the panel re-checks: the app may have been started/restarted meanwhile.
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState === "visible") void checkConnection({ prompt: true });
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
+  }, [checkConnection]);
+
+  // While connected, a light heartbeat keeps the app's dialog honest and notices a dead daemon.
+  useEffect(() => {
+    if (linkStatus !== "online") return;
+    const timer = setInterval(async () => {
+      const current = portRef.current;
+      if (current == null) return;
+      if (await pingRemixclip(current)) {
+        void greetRemixclip(current);
+        return;
+      }
+      setLinkStatus("offline");
+      setLinkOpen(true);
+    }, 15_000);
+    return () => clearInterval(timer);
+  }, [linkStatus]);
+
+  // Offline: keep watching quietly, so starting the app after opening the panel connects by itself
+  // (this also closes the port prompt) instead of leaving the user stuck on 「没有检测到」.
+  useEffect(() => {
+    if (linkStatus !== "offline") return;
+    const timer = setInterval(async () => {
+      const found = await detectRemixclip(portRef.current);
+      if (found == null) return;
+      portRef.current = found;
+      setPort(found);
+      setPortDraft(String(found));
+      setLinkStatus("online");
+      setLinkError("");
+      promptedRef.current = false;
+      await saveRemixclipConfig({ port: found });
+      void greetRemixclip(found);
+      setLinkOpen(false);
+      setSendStatus(`已连接 RemixClip（127.0.0.1:${found}）`);
+    }, 5_000);
+    return () => clearInterval(timer);
+  }, [linkStatus]);
 
   useEffect(() => {
     if (!sendStatus) return;
@@ -117,29 +180,7 @@ function App() {
   }, [sendStatus]);
 
   useEffect(() => {
-    if (!bridgeOpen || bridge.token) return;
-    let cancelled = false;
-    setBridgeOnline(null);
-    void (async () => {
-      const online = await pingRemixclip(endpointDraft);
-      if (cancelled) return;
-      setBridgeOnline(online);
-      if (!online) return;
-      // The app may already be in its 2-minute trust window: pair silently.
-      try {
-        await applyPair(await pairRemixclipAuto(endpointDraft), endpointDraft);
-        if (cancelled) return;
-        setBridgeError("");
-        setSendStatus("已连接 RemixClip，之后的导出会直接进入素材库");
-      } catch {
-        // Window closed: keep the panel open so the user can start it in the app.
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [bridgeOpen, bridge.token, endpointDraft, applyPair]);
-
-  useEffect(() => {
-    const port = chrome.runtime.connect({ name: "sidepanel" });
+    const channel = chrome.runtime.connect({ name: "sidepanel" });
     refresh();
     const listener = (msg: { type?: string; platform?: PlatformKey }) => {
       if (msg.type === "SNIFFER_UPDATED") {
@@ -150,7 +191,7 @@ function App() {
     };
     chrome.runtime.onMessage.addListener(listener);
     return () => {
-      port.disconnect();
+      channel.disconnect();
       chrome.runtime.onMessage.removeListener(listener);
     };
   }, [refresh, platform]);
@@ -329,36 +370,38 @@ function App() {
     };
   }, [data, selected, selectedUsers, isUserListMode, userGroups, tab, platform]);
 
-  // Main button: when paired, push straight to the library; otherwise download and lead
-  // the user to pairing.
+  // Main button: when connected, push straight to the library; otherwise open the port prompt.
+  // There is no loose JSON fallback — "export" here means "into RemixClip".
   const handleExport = useCallback(async () => {
     const built = buildExportPayload();
     if (!built) return;
 
-    if (!bridge.token) {
-      downloadJson(built.payload, built.filename);
-      setBridgeError("");
-      setBridgeOpen(true);
-      setSendStatus("已下载 JSON。连接 RemixClip 后，导出会直接进入素材库。");
+    const current = portRef.current;
+    if (linkStatus !== "online" || current == null) {
+      setLinkError("");
+      setLinkOpen(true);
+      setSendStatus("还没连上 RemixClip：连上后选中的内容会直接进入素材库（离线期间采集不会丢）。");
       return;
     }
 
     setSending(true);
     setSendStatus("");
     try {
-      const result = await sendToRemixclip(bridge, built.payload);
+      const result = await sendToRemixclip(current, built.payload);
       setSendStatus(`已发送到 RemixClip：${result.itemCount} 条（新增 ${result.created}，更新 ${result.updated}）`);
     } catch (err) {
       const message = err instanceof Error ? err.message : "发送失败";
       setSendStatus(message);
-      if (message.includes("配对") || message.includes("token") || message.includes("未连接")) {
-        setBridgeOpen(true);
-        setBridgeError(message);
+      // Connectivity problems are fixed in the port card, so surface it right there.
+      if (message.includes("连不上")) {
+        setLinkStatus("offline");
+        setLinkError(message);
+        setLinkOpen(true);
       }
     } finally {
       setSending(false);
     }
-  }, [buildExportPayload, bridge]);
+  }, [buildExportPayload, linkStatus]);
 
   const handleDownload = useCallback(() => {
     const built = buildExportPayload();
@@ -367,26 +410,31 @@ function App() {
     setSendStatus("已下载 JSON 文件");
   }, [buildExportPayload]);
 
-  /** Works while the app's pairing window is open (the user just clicked 「开启自动连接」). */
-  const handleAutoPair = useCallback(async () => {
-    setBridgeBusy(true);
-    setBridgeError("");
-    try {
-      await applyPair(await pairRemixclipAuto(endpointDraft), endpointDraft);
-      setSendStatus("已连接 RemixClip，之后的导出会直接进入素材库");
-    } catch (err) {
-      setBridgeError(err instanceof Error ? err.message : "连接失败");
-    } finally {
-      setBridgeBusy(false);
+  /** Manual fallback: probe exactly the port the user typed, and remember it on success. */
+  const handleConnect = useCallback(async () => {
+    const parsed = parsePort(portDraft);
+    if (parsed == null) {
+      setLinkError(`请输入 1-65535 之间的端口号（当前：${portDraft.trim() || "空"}）`);
+      return;
     }
-  }, [endpointDraft, applyPair]);
-
-  const handleDisconnect = useCallback(async () => {
-    const next = await clearRemixclipConfig();
-    setBridge(next);
-    setBridgeOnline(null);
-    setSendStatus("已断开 RemixClip");
-  }, []);
+    setChecking(true);
+    setLinkError("");
+    const online = await pingRemixclip(parsed);
+    setChecking(false);
+    if (!online) {
+      setLinkStatus("offline");
+      setLinkError(`127.0.0.1:${parsed} 上没有检测到 RemixClip，确认应用已启动、端口号没填错`);
+      return;
+    }
+    portRef.current = parsed;
+    setPort(parsed);
+    setLinkStatus("online");
+    setLinkOpen(false);
+    promptedRef.current = false;
+    await saveRemixclipConfig({ port: parsed });
+    await greetRemixclip(parsed);
+    setSendStatus(`已连接 RemixClip（127.0.0.1:${parsed}）`);
+  }, [portDraft]);
 
   function downloadJson(obj: unknown, filename: string) {
     const json = JSON.stringify(obj, null, 2);
@@ -415,18 +463,27 @@ function App() {
       {/* ── Left platform sidebar ── */}
       <div style={S.sidebar}>
         <div style={S.sidebarTop}>
-          {PLATFORMS.map((p) => (
+          {PLATFORMS.map((p) => {
+            const active = platform === p.key;
+            return (
             <button
               key={p.key}
+              type="button"
+              className="rc-tile"
+              aria-current={active ? "true" : undefined}
               title={p.enabled ? p.label : `${p.label}（即将支持）`}
               style={{
                 ...S.platformBtn,
-                ...(platform === p.key ? {
-                  backgroundColor: p.color + "18",
-                  borderColor: p.color,
-                } : {}),
+                // Always spell out both properties: React diffs inline styles by longhand, so
+                // omitting borderColor here is what turned the previous tile's border black.
+                backgroundColor: active
+                  ? p.color + "18"
+                  : hoveredPlatform === p.key ? "rgba(17, 17, 17, 0.04)" : "transparent",
+                borderColor: active ? p.color : "transparent",
                 ...(p.enabled ? {} : S.platformBtnDisabled),
               }}
+              onMouseEnter={() => setHoveredPlatform(p.key)}
+              onMouseLeave={() => setHoveredPlatform((current) => (current === p.key ? null : current))}
               onClick={() => {
                 if (!p.enabled || p.key === platform) return;
                 setPlatform(p.key);
@@ -443,13 +500,14 @@ function App() {
               }
               <span style={{
                 ...S.platformLabel,
-                color: platform === p.key ? p.color : (p.enabled ? "#666" : "#ccc"),
-                fontWeight: platform === p.key ? 700 : 400,
+                color: active ? p.color : (p.enabled ? "#666" : "#ccc"),
+                fontWeight: active ? 700 : 400,
               }}>
                 {p.label}
               </span>
             </button>
-          ))}
+            );
+          })}
         </div>
       </div>
 
@@ -468,11 +526,24 @@ function App() {
             <button
               type="button"
               style={S.bridgeButton}
-              title={bridge.token ? `已连接 ${bridge.endpoint}` : "连接 RemixClip 素材库"}
-              onClick={() => setBridgeOpen(true)}
+              title={
+                linkStatus === "online" && port
+                  ? `已连接 127.0.0.1:${port}`
+                  : "连接 RemixClip（自动检测端口）"
+              }
+              onClick={() => {
+                setLinkOpen(true);
+                if (linkStatus !== "online") void checkConnection({ prompt: false });
+              }}
             >
-              <span style={{ ...S.dot, backgroundColor: bridge.token ? "#22c55e" : "#c4c4c4" }} />
-              RemixClip
+              <span
+                style={{
+                  ...S.dot,
+                  backgroundColor:
+                    linkStatus === "online" ? "#22c55e" : linkStatus === "checking" ? "#f59e0b" : "#c4c4c4",
+                }}
+              />
+              {linkStatus === "online" && port ? `RemixClip :${port}` : "RemixClip"}
             </button>
             <span style={S.headerBadge}>被动采集</span>
           </div>
@@ -594,14 +665,14 @@ function App() {
           >
             {sending
               ? "⏳ 发送中…"
-              : bridge.token
+              : linkStatus === "online"
                 ? `⚡ 发送到 RemixClip (${selectionCount})`
-                : `📥 导出选中 (${selectionCount})`}
+                : `🔗 连接后发送 (${selectionCount})`}
           </button>
           <button
             style={S.btnIcon}
-            title="下载 JSON 文件"
-            aria-label="下载 JSON 文件"
+            title="手动导出 JSON 文件"
+            aria-label="手动导出 JSON 文件"
             onClick={handleDownload}
             disabled={selectionCount === 0}
           >
@@ -613,78 +684,109 @@ function App() {
         </div>
       </div>
 
-      {bridgeOpen && (
-        <div style={S.bridgeOverlay} onClick={() => setBridgeOpen(false)}>
+      {linkOpen && (
+        <div style={S.bridgeOverlay} onClick={() => setLinkOpen(false)}>
           <div style={S.bridgeCard} onClick={(event) => event.stopPropagation()}>
             <div style={S.bridgeHeader}>
               <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                <span style={{ ...S.dot, backgroundColor: bridge.token ? "#22c55e" : "#c4c4c4" }} />
+                <span
+                  style={{
+                    ...S.dot,
+                    backgroundColor:
+                      linkStatus === "online" ? "#22c55e" : linkStatus === "checking" ? "#f59e0b" : "#c4c4c4",
+                  }}
+                />
                 <strong style={{ fontSize: 14 }}>RemixClip 素材库</strong>
               </div>
-              <button style={S.bridgeClose} onClick={() => setBridgeOpen(false)} aria-label="关闭">×</button>
+              <button style={S.bridgeClose} onClick={() => setLinkOpen(false)} aria-label="关闭">×</button>
             </div>
 
-            {bridge.token ? (
-              <>
-                <p style={S.bridgeHelp}>
-                  已绑定。之后在插件里点「发送到 RemixClip」，封面、文案、评论会直接进入工作台的素材库。
-                </p>
-                <div style={S.bridgeInfoRow}><span>地址</span><code style={S.bridgeCode}>{bridge.endpoint}</code></div>
-                {bridge.deviceName && <div style={S.bridgeInfoRow}><span>设备</span><span>{bridge.deviceName}</span></div>}
-                <div style={S.bridgeActions}>
+            <p style={S.bridgeHelp}>
+              {linkStatus === "online"
+                ? "已连接。勾选内容点「发送到 RemixClip」，封面、文案、评论会直接进入工作台的素材库。"
+                : "插件打开时会自动检测本机的 RemixClip。没检测到时，请先启动应用；如果应用用的不是默认端口，填入它的端口号再检测。"}
+            </p>
+
+            <div style={S.bridgeStatus}>
+              <span
+                style={{
+                  ...S.dot,
+                  backgroundColor:
+                    linkStatus === "online" ? "#22c55e" : linkStatus === "checking" ? "#f59e0b" : "#c4c4c4",
+                }}
+              />
+              {checking
+                ? "正在检测…"
+                : linkStatus === "online"
+                  ? `已连接 127.0.0.1:${port}`
+                  : "没有检测到 RemixClip"}
+            </div>
+
+            <label style={S.fieldLabel} htmlFor="remixclip-port">端口号</label>
+            <div style={{ display: "flex", gap: 6 }}>
+              <input
+                id="remixclip-port"
+                style={{ ...S.fieldInput, flex: 1 }}
+                value={portDraft}
+                inputMode="numeric"
+                spellCheck={false}
+                placeholder={String(DEFAULT_REMIXCLIP_PORT)}
+                onChange={(event) => setPortDraft(event.target.value)}
+                onKeyDown={(event) => { if (event.key === "Enter") void handleConnect(); }}
+              />
+              <button
+                style={{
+                  ...S.btnExport,
+                  flex: "0 0 auto",
+                  padding: "8px 14px",
+                  backgroundColor: "#111",
+                  opacity: checking ? 0.5 : 1,
+                }}
+                disabled={checking}
+                onClick={() => void handleConnect()}
+              >
+                {checking ? "检测中…" : "检测并连接"}
+              </button>
+            </div>
+            <p style={S.bridgeHint}>
+              默认 7456；应用里「素材库 → 插件」会显示当前实际端口。自动尝试：
+              {portCandidates(portRef.current).join(" / ")}
+            </p>
+
+            {linkError && <p style={S.bridgeError}>{linkError}</p>}
+
+            <div style={S.bridgeActions}>
+              {linkStatus === "online" ? (
+                <>
                   <button
                     style={S.btnSecondary}
-                    onClick={() => { void chrome.tabs.create({ url: bridge.endpoint }); }}
+                    onClick={() => {
+                      if (port) void chrome.tabs.create({ url: `http://127.0.0.1:${port}` });
+                    }}
                   >
                     打开 RemixClip
                   </button>
-                  <button style={S.btnDanger} onClick={() => void handleDisconnect()}>断开</button>
-                </div>
-              </>
-            ) : (
-              <>
-                <p style={S.bridgeHelp}>
-                  在 RemixClip 顶部切到「素材库」→「连接浏览器插件」→ 点「开启自动连接」，然后回到这里点下面的按钮即可。
-                </p>
-                <div style={S.bridgeStatus}>
-                  <span style={{ ...S.dot, backgroundColor: bridgeOnline ? "#22c55e" : "#c4c4c4" }} />
-                  {bridgeOnline === null
-                    ? "正在检查应用…"
-                    : bridgeOnline
-                      ? "RemixClip 在线"
-                      : "没连上 RemixClip，请确认应用已启动"}
-                </div>
-                {bridgeError && <p style={S.bridgeError}>{bridgeError}</p>}
-                <div style={S.bridgeActions}>
                   <button
-                    style={{ ...S.btnExport, backgroundColor: "#111", opacity: bridgeBusy ? 0.5 : 1 }}
-                    disabled={bridgeBusy}
-                    onClick={() => void handleAutoPair()}
+                    style={S.btnSecondary}
+                    onClick={() => void checkConnection({ announce: true })}
                   >
-                    {bridgeBusy ? "连接中…" : "连接 RemixClip"}
+                    重新检测
                   </button>
-                </div>
-                <button style={S.bridgeLink} onClick={() => setEndpointOpen((open) => !open)}>
-                  {endpointOpen ? "收起高级设置" : "自定义服务地址"}
-                </button>
-                {endpointOpen && (
-                  <>
-                    <label style={S.fieldLabel}>服务地址</label>
-                    <input
-                      style={S.fieldInput}
-                      value={endpointDraft}
-                      spellCheck={false}
-                      placeholder={DEFAULT_REMIXCLIP_ENDPOINT}
-                      onChange={(event) => setEndpointDraft(event.target.value)}
-                      onBlur={() => { void pingRemixclip(endpointDraft).then(setBridgeOnline); }}
-                    />
-                    <p style={S.bridgeHelp}>
-                      默认 http://127.0.0.1:7456；只有 daemon 跑了自定义端口时才需要改。
-                    </p>
-                  </>
-                )}
-              </>
-            )}
+                </>
+              ) : (
+                <>
+                  <button style={S.btnSecondary} onClick={() => setLinkOpen(false)}>
+                    先离线使用
+                  </button>
+                  <button
+                    style={S.btnSecondary}
+                    onClick={() => void checkConnection({ announce: true })}
+                  >
+                    自动检测
+                  </button>
+                </>
+              )}
+            </div>
           </div>
         </div>
       )}
@@ -726,7 +828,8 @@ function UserGroupCard({
     <div
       style={{
         ...S.userGroupCard,
-        ...(checked ? { borderColor: accentColor, backgroundColor: accentColor + "08" } : {}),
+        borderColor: checked ? accentColor : "#eee",
+        backgroundColor: checked ? accentColor + "08" : "#fff",
       }}
     >
       <input
@@ -789,7 +892,8 @@ function NoteItem({
     <div
       style={{
         ...S.noteCard,
-        ...(checked ? { borderColor: accentColor, backgroundColor: accentColor + "08" } : {}),
+        borderColor: checked ? accentColor : "#eee",
+        backgroundColor: checked ? accentColor + "08" : "#fff",
       }}
       onClick={onToggle}
     >
@@ -875,7 +979,12 @@ const S: Record<string, React.CSSProperties> = {
     gap: 2,
     width: 48,
     padding: "8px 0",
-    border: "2px solid transparent",
+    // Longhands on purpose: the active state only overrides borderColor, and a `border`
+    // shorthand would be expanded by the browser into width/style/image — removing the color
+    // later then falls back to currentColor, i.e. the black frame users saw on the old tab.
+    borderWidth: 2,
+    borderStyle: "solid" as const,
+    borderColor: "transparent",
     borderRadius: 10,
     backgroundColor: "transparent",
     cursor: "pointer",
@@ -944,8 +1053,12 @@ const S: Record<string, React.CSSProperties> = {
   tab: {
     flex: 1,
     padding: "9px 0",
-    border: "none",
-    borderBottom: "2px solid transparent",
+    // Longhands so the active tab can override just the underline colour.
+    borderWidth: 0,
+    borderStyle: "none" as const,
+    borderBottomWidth: 2,
+    borderBottomStyle: "solid" as const,
+    borderBottomColor: "transparent",
     backgroundColor: "transparent",
     color: "#999",
     fontSize: 12,
@@ -956,8 +1069,11 @@ const S: Record<string, React.CSSProperties> = {
   tabActive: {
     flex: 1,
     padding: "9px 0",
-    border: "none",
-    borderBottom: "2px solid #ff6b6b",
+    borderWidth: 0,
+    borderStyle: "none" as const,
+    borderBottomWidth: 2,
+    borderBottomStyle: "solid" as const,
+    borderBottomColor: "#ff6b6b",
     backgroundColor: "transparent",
     color: "#ff6b6b",
     fontSize: 12,
@@ -1000,7 +1116,10 @@ const S: Record<string, React.CSSProperties> = {
     marginBottom: 5,
     backgroundColor: "#fff",
     borderRadius: 8,
-    border: "1px solid #eee",
+    // Longhands: the checked state overrides borderColor only.
+    borderWidth: 1,
+    borderStyle: "solid" as const,
+    borderColor: "#eee",
     cursor: "pointer",
   },
   userGroupAvatar: {
@@ -1042,7 +1161,10 @@ const S: Record<string, React.CSSProperties> = {
     marginBottom: 5,
     backgroundColor: "#fff",
     borderRadius: 8,
-    border: "1px solid #eee",
+    // Longhands: the checked state overrides borderColor only.
+    borderWidth: 1,
+    borderStyle: "solid" as const,
+    borderColor: "#eee",
     cursor: "pointer",
   },
   noteCardChecked: { borderColor: "#ff6b6b", backgroundColor: "#fff8f8" },
@@ -1235,6 +1357,12 @@ const S: Record<string, React.CSSProperties> = {
     color: "#888",
     fontSize: 11,
   },
+  bridgeHint: {
+    margin: "6px 0 0",
+    color: "#999",
+    fontSize: 10.5,
+    lineHeight: 1.6,
+  },
   bridgeError: {
     margin: "8px 0 0",
     padding: "6px 8px",
@@ -1249,33 +1377,6 @@ const S: Record<string, React.CSSProperties> = {
     gap: 6,
     marginTop: 14,
   },
-  bridgeLink: {
-    marginTop: 10,
-    padding: 0,
-    border: "none",
-    background: "transparent",
-    color: "#888",
-    fontSize: 11.5,
-    textDecoration: "underline",
-    cursor: "pointer",
-  },
-  bridgeInfoRow: {
-    display: "flex",
-    alignItems: "center",
-    gap: 8,
-    padding: "7px 0",
-    borderBottom: "1px solid #f2f2f2",
-    color: "#555",
-    fontSize: 11.5,
-  },
-  bridgeCode: {
-    marginLeft: "auto",
-    padding: "2px 6px",
-    borderRadius: 4,
-    backgroundColor: "#f5f5f5",
-    color: "#333",
-    fontSize: 11,
-  },
   btnSecondary: {
     flex: 1,
     padding: "8px 0",
@@ -1283,16 +1384,6 @@ const S: Record<string, React.CSSProperties> = {
     borderRadius: 8,
     backgroundColor: "#fff",
     color: "#444",
-    fontSize: 12,
-    fontWeight: 600,
-    cursor: "pointer",
-  },
-  btnDanger: {
-    padding: "8px 14px",
-    border: "1px solid #f0d4d0",
-    borderRadius: 8,
-    backgroundColor: "#fff7f6",
-    color: "#c0392b",
     fontSize: 12,
     fontWeight: 600,
     cursor: "pointer",

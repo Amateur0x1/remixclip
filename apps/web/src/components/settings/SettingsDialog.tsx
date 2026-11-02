@@ -8,11 +8,12 @@
  * Agent = GLOBAL (`app-config.agentId`): one CLI drives every project and every chat. Projects
  * are containers managed from the sidebar, so they are not configured here.
  */
-import { useEffect, useMemo, useState } from 'react';
-import type { AgentInfo, ConnectionTestResponse } from '@remixclip/contracts';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import type { AgentInfo, ConnectionTestResponse, DaemonRuntimeInfo } from '@remixclip/contracts';
 import {
   Check,
   ChevronRight,
+  Copy,
   ExternalLink,
   FlaskConical,
   LoaderCircle,
@@ -24,7 +25,7 @@ import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { Input } from '@/components/ui/input';
-import { testConnection } from '@/providers/daemon';
+import { fetchDaemonInfo, testConnection } from '@/providers/daemon';
 import { useI18n, type DictKey } from '@/i18n';
 import { cn } from '@/lib/utils';
 
@@ -72,9 +73,48 @@ export function SettingsDialog({
   const [testState, setTestState] = useState<TestState>({ status: 'idle' });
   const [connectingId, setConnectingId] = useState<string | null>(null);
   const [error, setError] = useState('');
+  const [daemonInfo, setDaemonInfo] = useState<DaemonRuntimeInfo | null>(null);
+  const [daemonError, setDaemonError] = useState('');
+  const [daemonLoading, setDaemonLoading] = useState(false);
+  const [endpointCopied, setEndpointCopied] = useState(false);
 
   useEffect(() => { setModelDraft(model); }, [model]);
-  useEffect(() => { if (!open) { setTestState({ status: 'idle' }); setError(''); } }, [open]);
+  useEffect(() => { if (!open) { setTestState({ status: 'idle' }); setError(''); setEndpointCopied(false); } }, [open]);
+
+  const loadDaemonInfo = useCallback(async () => {
+    setDaemonLoading(true);
+    setDaemonError('');
+    try {
+      setDaemonInfo(await fetchDaemonInfo());
+    } catch (err) {
+      setDaemonInfo(null);
+      setDaemonError(err instanceof Error ? err.message : t('errors.daemonInfo'));
+    } finally {
+      setDaemonLoading(false);
+    }
+  }, [t]);
+
+  // The port is only meaningful while the drawer is open: refetch on open so a restarted daemon
+  // (or a port changed by tools-dev) is reflected without reloading the app.
+  useEffect(() => { if (open) void loadDaemonInfo(); }, [open, loadDaemonInfo]);
+
+  useEffect(() => {
+    if (!endpointCopied) return;
+    const timer = setTimeout(() => setEndpointCopied(false), 1600);
+    return () => clearTimeout(timer);
+  }, [endpointCopied]);
+
+  const endpoint = daemonInfo?.endpoint ?? '';
+
+  const copyEndpoint = async () => {
+    if (!endpoint) return;
+    try {
+      await navigator.clipboard.writeText(endpoint);
+      setEndpointCopied(true);
+    } catch {
+      setDaemonError(t('markdown.copyFailed'));
+    }
+  };
 
   const selectedAgent = availableAgents.find((agent) => agent.id === agentId) ?? null;
 
@@ -342,6 +382,57 @@ export function SettingsDialog({
                 </CollapsibleContent>
               </Collapsible>
             )}
+          </section>
+
+          {/* ── Local service ─────────────────────────────────────────── */}
+          <section aria-label={t('settings.daemonSection')} className="mt-5 border-t border-border pt-4">
+            <div className="mb-2 flex items-center justify-between">
+              <h2 className="text-[12px] font-medium tracking-wide text-muted-foreground uppercase">{t('settings.daemonSection')}</h2>
+              <Button
+                type="button"
+                variant="ghost"
+                size="xs"
+                className="text-muted-foreground hover:text-foreground"
+                disabled={daemonLoading}
+                onClick={() => void loadDaemonInfo()}
+              >
+                <RefreshCw className={cn('size-3.5', daemonLoading && 'animate-spin')} aria-hidden="true" />
+                {t('settings.refresh')}
+              </Button>
+            </div>
+            <p className="mb-2 text-[12px] leading-5 text-muted-foreground">{t('settings.daemonHint')}</p>
+
+            <div className="rounded-lg border border-border px-3 py-2.5">
+              <div className="flex items-baseline gap-2">
+                <span className="text-[12.5px] text-muted-foreground">{t('settings.daemonPort')}</span>
+                <code className="ml-auto font-mono text-[13px] font-medium text-foreground">
+                  {daemonInfo?.port ?? '—'}
+                </code>
+              </div>
+              <div className="mt-1.5 flex items-center gap-2">
+                <code className="min-w-0 flex-1 truncate font-mono text-[11.5px] text-muted-foreground" title={endpoint || undefined}>
+                  {endpoint || '—'}
+                </code>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="xs"
+                  className="shrink-0 text-muted-foreground hover:text-foreground"
+                  disabled={!endpoint}
+                  onClick={() => void copyEndpoint()}
+                >
+                  {endpointCopied ? (
+                    <Check className="size-3" aria-hidden="true" />
+                  ) : (
+                    <Copy className="size-3" aria-hidden="true" />
+                  )}
+                  {endpointCopied ? t('common.copied') : t('settings.copyEndpoint')}
+                </Button>
+              </div>
+              {daemonError && (
+                <p role="alert" className="mt-1.5 text-[11.5px] leading-5 text-destructive">{daemonError}</p>
+              )}
+            </div>
           </section>
 
           {error && <p role="alert" className="mt-3 rounded-md bg-secondary p-2 text-[12px] text-foreground">{error}</p>}
