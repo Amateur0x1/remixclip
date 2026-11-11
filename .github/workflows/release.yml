@@ -1,0 +1,453 @@
+name: Release
+
+# Trigger matrix:
+#   tag push (`v0.2.0`)        → full build, published as a stable release.
+#   merge to main              → full build, published as a prerelease snapshot
+#                                (`v0.2.1-main.<sha>`), never touches `latest`.
+#   workflow_dispatch          → build artifacts only unless publish=true.
+#
+# Every trigger runs the same fail-closed pipeline, so a snapshot is exactly as
+# verified as a tagged release.
+on:
+  push:
+    tags:
+      - 'v*'
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to build (x.y.z or x.y.z-<prerelease>). Empty = apps/desktop/package.json.'
+        required: false
+        type: string
+      prerelease:
+        description: 'Mark the GitHub Release as a prerelease (auto-detected from a -suffix).'
+        required: false
+        type: boolean
+        default: false
+      publish:
+        description: 'Publish a GitHub Release. Uncheck to build and keep artifacts only.'
+        required: false
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  NODE_VERSION: '24.18.0'
+  PNPM_VERSION: '10.33.2'
+  # Keep the bundled runtime in lockstep with the Node that compiled better-sqlite3.
+  REMIXCLIP_NODE_VERSION: '24.18.0'
+  # The lockfile stores integrity hashes only, so the registry is chosen at install
+  # time. Pin the public registry here; a mirror configured in a developer's global
+  # .npmrc must never leak into CI.
+  NPM_CONFIG_REGISTRY: https://registry.npmjs.org
+
+jobs:
+  preflight:
+    name: Preflight (version, tag, channel)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      version: ${{ steps.resolve.outputs.version }}
+      tag: ${{ steps.resolve.outputs.tag }}
+      prerelease: ${{ steps.resolve.outputs.prerelease }}
+      publish: ${{ steps.resolve.outputs.publish }}
+      channel: ${{ steps.resolve.outputs.channel }}
+      snapshot: ${{ steps.resolve.outputs.snapshot }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Verify workspace
+        run: |
+          pnpm -r --filter './packages/*' --if-present run build
+          pnpm --filter @remixclip/daemon build
+          pnpm --filter @remixclip/desktop build
+          pnpm --filter @remixclip/web exec next typegen
+          pnpm typecheck
+          pnpm --filter @remixclip/tools-pack test
+          pnpm --filter @remixclip/daemon test
+
+      - name: Resolve version and release intent
+        id: resolve
+        shell: bash
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+          INPUT_PRERELEASE: ${{ inputs.prerelease }}
+          INPUT_PUBLISH: ${{ inputs.publish }}
+        run: |
+          set -euo pipefail
+
+          package_version="$(node -p "require('./apps/desktop/package.json').version")"
+          is_tag=false
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then is_tag=true; fi
+
+          # A merge to main builds the plain package version, so artifact names stay readable
+          # (`RemixClip-0.1.0-mac-arm64.dmg`). Uniqueness moves to the tag: the build counter is
+          # never part of a file name, and a re-run of the same commit still cannot collide.
+          if [ -n "$INPUT_VERSION" ]; then
+            version="${INPUT_VERSION#v}"
+            snapshot=false
+          elif [ "$is_tag" = true ]; then
+            version="${GITHUB_REF_NAME#v}"
+            snapshot=false
+          else
+            version="${package_version}"
+            snapshot=true
+          fi
+
+          if ! printf '%s' "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'; then
+            echo "::error::invalid version '$version' (expected x.y.z or x.y.z-<prerelease>)"
+            exit 1
+          fi
+
+          if [ "$is_tag" = true ] && [ "$package_version" != "$version" ]; then
+            echo "::error::tag v$version does not match apps/desktop/package.json ($package_version); bump the package before tagging"
+            exit 1
+          fi
+
+          case "$version" in
+            *-*) prerelease=true ;;
+            *) prerelease="${INPUT_PRERELEASE:-false}" ;;
+          esac
+          # An untagged snapshot of main is never a supported release, whatever the version says.
+          if [ "$snapshot" = true ]; then prerelease=true; fi
+          if [ "$prerelease" != "true" ]; then prerelease=false; fi
+          if [ "$is_tag" = true ]; then
+            publish=true
+          else
+            publish="${INPUT_PUBLISH:-true}"
+          fi
+
+          if [ "$snapshot" = true ]; then
+            tag="v${version}-build.${GITHUB_RUN_NUMBER}"
+          else
+            tag="v$version"
+          fi
+          if [ "$publish" = "true" ] && gh release view "$tag" >/dev/null 2>&1; then
+            if [ "$is_tag" = true ]; then
+              echo "::error::GitHub Release $tag already exists; refusing to overwrite"
+              exit 1
+            fi
+            # Workflow re-run for a commit whose snapshot is already published: the assets are
+            # identical, so rebuild for verification but leave the release untouched.
+            echo "::notice::$tag is already published for ${GITHUB_SHA:0:7}; rebuilding without publishing"
+            publish=false
+          fi
+
+          {
+            echo "version=$version"
+            echo "tag=$tag"
+            echo "prerelease=$prerelease"
+            echo "publish=$publish"
+            echo "snapshot=$snapshot"
+            echo "channel=$([ "$prerelease" = "true" ] && echo prerelease || echo stable)"
+          } >> "$GITHUB_OUTPUT"
+          echo "Releasing $tag (prerelease=$prerelease, publish=$publish, snapshot=$snapshot)"
+
+  build:
+    name: Build ${{ matrix.platform }}-${{ matrix.arch }}
+    needs: preflight
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 75
+    env:
+      # A snapshot ships the plain package version, so tell the manifest its real channel.
+      REMIXCLIP_CHANNEL: ${{ needs.preflight.outputs.channel }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-15
+            platform: mac
+            arch: arm64
+          - os: macos-15-intel
+            platform: mac
+            arch: x64
+          - os: windows-latest
+            platform: win
+            arch: x64
+          - os: ubuntu-latest
+            platform: linux
+            arch: x64
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # Optional Apple signing. When the secrets are absent the build stays unsigned and
+      # tools-pack logs that fact instead of failing.
+      - name: Prepare Apple signing certificate
+        if: matrix.platform == 'mac'
+        continue-on-error: true
+        env:
+          APPLE_SIGNING_CERTIFICATE_BASE64: ${{ secrets.APPLE_SIGNING_CERTIFICATE_BASE64 }}
+          APPLE_SIGNING_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_SIGNING_CERTIFICATE_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [ -z "${APPLE_SIGNING_CERTIFICATE_BASE64:-}" ]; then
+            echo "No Apple signing certificate configured; producing an unsigned build."
+            exit 0
+          fi
+          cert="$RUNNER_TEMP/remixclip-signing.p12"
+          printf '%s' "$APPLE_SIGNING_CERTIFICATE_BASE64" | base64 --decode > "$cert" 2>/dev/null \
+            || printf '%s' "$APPLE_SIGNING_CERTIFICATE_BASE64" | base64 -D > "$cert"
+          {
+            echo "CSC_LINK=$cert"
+            echo "CSC_KEY_PASSWORD=$APPLE_SIGNING_CERTIFICATE_PASSWORD"
+          } >> "$GITHUB_ENV"
+
+      - name: Build macOS artifacts
+        if: matrix.platform == 'mac'
+        shell: bash
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/remixclip-build"
+          args=(
+            mac build
+            --to all
+            --arch "${{ matrix.arch }}"
+            --version "${{ needs.preflight.outputs.version }}"
+            --sign auto
+            --json
+          )
+          # `--sign auto` picks up CSC_LINK from the certificate step; notarization needs
+          # the full Apple credential trio and is only requested when all of it exists.
+          if [ -n "${APPLE_ID:-}" ] && [ -n "${APPLE_APP_SPECIFIC_PASSWORD:-}" ] && [ -n "${APPLE_TEAM_ID:-}" ]; then
+            args+=(--notarize)
+          fi
+          pnpm exec tools-pack "${args[@]}" \
+            | tee "$RUNNER_TEMP/remixclip-build/mac-${{ matrix.arch }}.json"
+
+      # Optional Windows signing; electron-builder reads CSC_LINK / CSC_KEY_PASSWORD.
+      - name: Prepare Windows signing certificate
+        if: matrix.platform == 'win'
+        continue-on-error: true
+        shell: pwsh
+        env:
+          WIN_CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
+          WIN_CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:WIN_CSC_LINK)) {
+            Write-Host "No Windows signing certificate configured; producing an unsigned build."
+            exit 0
+          }
+          "CSC_LINK=$env:WIN_CSC_LINK" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "CSC_KEY_PASSWORD=$env:WIN_CSC_KEY_PASSWORD" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Build Windows artifacts
+        if: matrix.platform == 'win'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $out = Join-Path $env:RUNNER_TEMP "remixclip-build"
+          New-Item -ItemType Directory -Force -Path $out | Out-Null
+          pnpm exec tools-pack win build `
+            --to all `
+            --arch x64 `
+            --version "${{ needs.preflight.outputs.version }}" `
+            --json | Tee-Object -FilePath (Join-Path $out "win-x64.json")
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Build Linux artifacts
+        if: matrix.platform == 'linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/remixclip-build"
+          pnpm exec tools-pack linux build \
+            --to all \
+            --arch x64 \
+            --version "${{ needs.preflight.outputs.version }}" \
+            --json | tee "$RUNNER_TEMP/remixclip-build/linux-x64.json"
+
+      - name: Upload build report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-report-${{ matrix.platform }}-${{ matrix.arch }}
+          path: ${{ runner.temp }}/remixclip-build
+          if-no-files-found: warn
+          retention-days: 3
+
+      - name: Upload release artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: remixclip-${{ matrix.platform }}-${{ matrix.arch }}
+          path: |
+            apps/desktop/release/*.dmg
+            apps/desktop/release/*.zip
+            apps/desktop/release/*.exe
+            apps/desktop/release/*.AppImage
+            apps/desktop/release/*.blockmap
+            apps/desktop/release/latest*.yml
+            apps/desktop/release/*-manifest.json
+            apps/desktop/release/SHA256SUMS-*.txt
+          if-no-files-found: error
+          retention-days: 7
+
+  extension:
+    name: Build browser companion
+    needs: preflight
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      # The companion is an independent pnpm project, outside the root workspace.
+      - name: Install companion dependencies
+        run: pnpm extension:install
+
+      - name: Build companion
+        run: pnpm extension:build
+
+      - name: Zip companion
+        run: |
+          cd extensions/remixclip-companion/dist
+          zip -qr "$GITHUB_WORKSPACE/remixclip-companion.zip" .
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: remixclip-extension
+          path: remixclip-companion.zip
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    name: Publish GitHub Release
+    needs: [preflight, build, extension]
+    if: needs.preflight.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: ${{ needs.preflight.outputs.tag }}
+      VERSION: ${{ needs.preflight.outputs.version }}
+      PRERELEASE: ${{ needs.preflight.outputs.prerelease }}
+      SNAPSHOT: ${{ needs.preflight.outputs.snapshot }}
+    steps:
+      # `gh release create --generate-notes` walks the local git history to find the previous
+      # tag, so the publish job needs a checkout even though it only handles release assets.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # Only release artifacts; the build-report artifacts must never reach the release.
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          pattern: remixclip-*
+          merge-multiple: true
+
+      - name: Merge and verify checksums
+        run: |
+          set -euo pipefail
+          cd dist
+          ls -1 SHA256SUMS-*.txt >/dev/null
+          cat SHA256SUMS-*.txt | sort -k2 -u > SHA256SUMS.txt
+          rm -f SHA256SUMS-*.txt
+          sha256sum -c SHA256SUMS.txt
+
+      - name: Write asset summary
+        run: |
+          set -euo pipefail
+          {
+            echo "## RemixClip $VERSION"
+            echo
+            echo "- Channel: \`$( [ "$PRERELEASE" = "true" ] && echo prerelease || echo stable )\`"
+            echo "- Source: $( [ "$SNAPSHOT" = "true" ] && echo 'automated snapshot of main (untagged work, not a supported release)' || echo 'tagged release' )"
+            echo "- Tag: \`$TAG\`"
+            echo "- Commit: \`${GITHUB_SHA}\`"
+            echo
+            echo "| Asset | Size |"
+            echo "| --- | --- |"
+            cd dist
+            for file in *; do
+              [ -f "$file" ] || continue
+              echo "| \`$file\` | $(du -h "$file" | cut -f1) |"
+            done
+          } | tee assets-summary.md
+          cat assets-summary.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Create draft release
+        id: create_release
+        run: |
+          set -euo pipefail
+          title="RemixClip $VERSION"
+          if [ "$SNAPSHOT" = "true" ]; then title="RemixClip $VERSION (main snapshot)"; fi
+          args=(release create "$TAG" --target "$GITHUB_SHA" --title "$title" --generate-notes --draft)
+          if [ "$PRERELEASE" = "true" ]; then args+=(--prerelease); fi
+          gh "${args[@]}"
+
+      - name: Upload assets
+        run: gh release upload "$TAG" dist/* --clobber
+
+      - name: Verify uploaded asset count
+        run: |
+          set -euo pipefail
+          expected="$(find dist -maxdepth 1 -type f | wc -l)"
+          actual="$(gh release view "$TAG" --json assets --jq '.assets | length')"
+          echo "expected=$expected actual=$actual"
+          if [ "$expected" != "$actual" ]; then
+            echo "::error::asset count mismatch after upload"
+            exit 1
+          fi
+
+      - name: Publish release
+        run: |
+          set -euo pipefail
+          args=(release edit "$TAG" --draft=false)
+          if [ "$PRERELEASE" = "true" ]; then
+            args+=(--prerelease)
+          else
+            args+=(--latest)
+          fi
+          gh "${args[@]}"
+
+      - name: Roll back release and tag on failure
+        if: failure() && steps.create_release.outcome == 'success'
+        run: |
+          set +e
+          echo "publish failed after the draft was created; rolling back $TAG"
+          # --cleanup-tag removes the remote tag too, so no checkout is needed here.
+          gh release delete "$TAG" --cleanup-tag --yes

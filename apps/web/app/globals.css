@@ -1,0 +1,269 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "./solid-glass.css";
+
+/*
+ * [INPUT]: Tailwind CSS, Geist fonts, Solid Glass material, and shared shadcn primitives.
+ * [OUTPUT]: Smoked-glass surfaces, typography, motion, keyboard focus tokens, and scoped CommonMark/GFM chat styles.
+ * [POS]: Global visual theme for the web workbench and chat.
+ */
+@theme inline {
+  /* Disable default accent palettes so every app color stays neutral. */
+  --color-*: initial;
+  --color-black: #000000;
+  --color-white: #ffffff;
+
+  --font-sans: var(--font-geist-sans), "PingFang SC", system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), "SF Mono", ui-monospace, monospace;
+  --font-workbench: var(--font-geist-sans), "PingFang SC", system-ui, sans-serif;
+
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-panel: var(--panel);
+  --color-sidebar: var(--sidebar);
+  --color-brand: var(--brand);
+  --color-brand-foreground: var(--brand-foreground);
+  --color-brand-muted: var(--brand-muted);
+  --color-link: var(--link);
+  --color-success: var(--success);
+  --color-status-running: var(--status-running);
+  --color-status-done: var(--status-done);
+  --color-status-interrupted: var(--status-interrupted);
+
+  /* Compatibility names used by the chat and workbench while their views migrate. */
+  --color-ink: oklch(0.16 0 0);
+  --color-muted: var(--muted-foreground);
+  --color-line: var(--border);
+
+  /* Geist neutral scales, cooled to sit with the glass's 265deg hue. */
+  --color-background-100: oklch(0.99 0.003 265);
+  --color-background-200: oklch(0.98 0.004 265 / 55%);
+  --color-gray-100: oklch(0.965 0.004 265);
+  --color-gray-200: oklch(0.94 0.005 265);
+  --color-gray-300: oklch(0.9 0.006 265);
+  --color-gray-400: oklch(0.86 0.006 265);
+  --color-gray-500: oklch(0.78 0.006 265);
+  --color-gray-600: oklch(0.7 0.005 265);
+  --color-gray-700: oklch(0.62 0.005 265);
+  --color-gray-800: oklch(0.55 0.004 265);
+  --color-gray-900: oklch(0.4 0.003 265);
+  --color-gray-1000: oklch(0.16 0 0);
+  --color-gray-alpha-100: oklch(0.3 0.02 265 / 5%);
+  --color-gray-alpha-200: oklch(0.3 0.02 265 / 8%);
+  --color-gray-alpha-300: oklch(0.3 0.02 265 / 10%);
+  --color-gray-alpha-400: oklch(0.3 0.02 265 / 13%);
+  --color-gray-alpha-500: oklch(0.3 0.02 265 / 21%);
+  --color-gray-alpha-600: oklch(0.3 0.02 265 / 24%);
+  --color-gray-alpha-700: oklch(0.3 0.02 265 / 44%);
+  --color-gray-alpha-800: oklch(0.3 0.02 265 / 51%);
+  --color-gray-alpha-900: oklch(0.3 0.02 265 / 70%);
+  --color-gray-alpha-1000: oklch(0.16 0 0 / 91%);
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-3xl: calc(var(--radius) * 2.2);
+  --radius-4xl: calc(var(--radius) * 2.6);
+  --shadow-xs: 0 2px 2px rgb(0 0 0 / 4%);
+  --shadow-sm: 0 2px 2px rgb(0 0 0 / 4%);
+  --shadow-md: 0 1px 1px rgb(0 0 0 / 2%), 0 4px 8px -4px rgb(0 0 0 / 4%), 0 16px 24px -8px rgb(0 0 0 / 6%);
+  --shadow-lg: 0 1px 1px rgb(0 0 0 / 2%), 0 8px 16px -4px rgb(0 0 0 / 4%), 0 24px 32px -8px rgb(0 0 0 / 6%);
+
+  --animate-blink: blink 1s steps(2) infinite;
+  --animate-wb-slide: wb-slide-drawer 0.25s cubic-bezier(0.175, 0.885, 0.32, 1.1);
+  --animate-reconnect: reconnect-pulse 1.6s ease-in-out infinite;
+  --animate-record-sweep: record-sweep 2.5s infinite;
+
+  @keyframes blink { 50% { opacity: 0; } }
+  @keyframes wb-slide-drawer { from { transform: translateX(100%); } to { transform: translateX(0); } }
+  @keyframes reconnect-pulse {
+    0%, 100% { transform: scale(0.72); opacity: 0.45; }
+    50% { transform: scale(1); opacity: 0.9; }
+  }
+  @keyframes record-sweep {
+    0% { background-position: 100% 0; animation-timing-function: cubic-bezier(0.23, 1, 0.32, 1); }
+    60%, 100% { background-position: 0% 0; }
+  }
+}
+
+@utility shimmer-text {
+  background-image: linear-gradient(90deg,
+    var(--color-muted) 0%, var(--color-muted) 33.33%,
+    var(--chat-dia-1) 40%, var(--chat-dia-2) 45%, var(--chat-dia-3) 50%, var(--chat-dia-4) 55%, var(--chat-dia-5) 60%,
+    var(--color-muted) 66.67%, var(--color-muted) 100%);
+  background-size: 300% 100%;
+  background-clip: text;
+  -webkit-background-clip: text;
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+  animation: var(--animate-record-sweep);
+}
+
+/* Title-bar drag strip across the top of the window: under Electron the system handles dragging
+   and double-click zoom (the double-click behavior follows the system preference).
+   In the browser it is 0 without an explicit height class (kept in @layer base so it cannot
+   override the h-12 utility); under macOS Electron the traffic lights NSWindowButton are 16px
+   tall (a 12px dot centred at y = 15 + 8 = 23px), so the top bar is 46px (centre line y = 23px),
+   putting the right-hand buttons exactly on the traffic lights' centre line. */
+@layer base {
+  [data-remixclip-titlebar] {
+    height: 0;
+  }
+}
+[data-remixclip-titlebar] {
+  -webkit-app-region: drag;
+  app-region: drag;
+}
+body.remixclip-electron-macos [data-remixclip-titlebar] { height: 46px; }
+
+/* Buttons / inputs in the drag strip must consume events themselves, otherwise a click is
+   treated as dragging the window. */
+[data-remixclip-titlebar] :is(button, a, input, select, textarea, [role='button'], [data-no-drag]) {
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
+}
+
+/* Title bar on the left edge of the window (sidebar top, and the main area top once the sidebar
+   is collapsed): under macOS the traffic-light dots occupy x = 17..69, so we leave 88px to keep
+   the "open sidebar" button's hover box (x = 88) comfortably clear of the green light. */
+body.remixclip-electron-macos [data-remixclip-sidebar-chrome] { padding-left: 88px; }
+
+/* The floating layer on the chat page (background tasks): it doesn't take content width, its
+   glass is thicker, and it lifts higher than a normal panel.
+   Same layer material as .bg-popover: the one menus and popovers use. */
+.remixclip-floating-panel {
+  background-color: var(--popover);
+  box-shadow:
+    inset 0 1px 0 var(--glass-rim),
+    inset 0 0 0 1px var(--glass-inner),
+    0 0 0 1px var(--popover-edge),
+    0 24px 60px -18px var(--glass-shade),
+    0 6px 16px -6px var(--glass-lift);
+}
+
+@layer base {
+  /* Tailwind v4 otherwise uses currentColor for borders without a color utility. */
+  *, ::before, ::after {
+    @apply border-border;
+  }
+  /* The page is Solid Glass's cool-grey base, and glass surfaces float on its ambient light. */
+  html, body {
+    @apply h-full overflow-hidden bg-background font-sans text-sm leading-[1.5] text-foreground;
+    font-synthesis-weight: none;
+    text-rendering: optimizeLegibility;
+  }
+  body {
+    background-image:
+      radial-gradient(62rem 42rem at 12% -6rem, var(--light-1), transparent 62%),
+      radial-gradient(52rem 38rem at 92% 4rem, var(--light-2), transparent 60%),
+      radial-gradient(64rem 46rem at 55% 110%, var(--light-3), transparent 62%);
+    background-repeat: no-repeat;
+    background-attachment: fixed;
+  }
+  button { cursor: pointer; }
+  button:disabled { cursor: not-allowed; }
+  a:not([data-slot]) { color: var(--link); @apply underline-offset-4 hover:underline; }
+  pre { @apply font-mono text-[12.5px]; }
+  :focus-visible:not(input):not(textarea) { outline: 2px solid var(--ring); outline-offset: 2px; }
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { border-radius: 999px; background: var(--border); }
+  ::-webkit-scrollbar-thumb:hover { background: var(--muted-foreground); }
+}
+
+/* Markdown stays within the message column; only wide tables and code scroll horizontally. */
+.chat-markdown {
+  min-width: 0;
+  line-height: 1.75;
+  overflow-wrap: anywhere;
+}
+.chat-markdown > :first-child { margin-top: 0; }
+.chat-markdown > :last-child { margin-bottom: 0; }
+.chat-markdown :is(h1, h2, h3, h4, h5, h6) {
+  margin: 1.25em 0 0.55em;
+  font-weight: 600;
+  line-height: 1.45;
+  color: var(--foreground);
+}
+.chat-markdown h1 { font-size: 1.3em; }
+.chat-markdown h2 { font-size: 1.18em; }
+.chat-markdown h3 { font-size: 1.08em; }
+.chat-markdown :is(h4, h5, h6) { font-size: 1em; }
+.chat-markdown p { margin: 0.7em 0; white-space: pre-line; }
+.chat-markdown :is(ul, ol) { margin: 0.75em 0; padding-inline-start: 1.5em; }
+.chat-markdown ul { list-style-type: disc; }
+.chat-markdown ol { list-style-type: decimal; }
+.chat-markdown ul ul { list-style-type: circle; }
+.chat-markdown li { margin: 0.3em 0; padding-inline-start: 0.15em; }
+.chat-markdown li > :is(ul, ol) { margin: 0.3em 0; }
+.chat-markdown li > p { margin: 0.35em 0; }
+.chat-markdown strong { font-weight: 600; }
+.chat-markdown a { text-decoration: underline; text-underline-offset: 3px; }
+.chat-markdown blockquote {
+  margin: 1em 0;
+  border-inline-start: 3px solid var(--border);
+  padding-inline-start: 1em;
+  color: var(--muted-foreground);
+}
+.chat-markdown hr { margin: 1.5em 0; border: 0; border-top: 1px solid var(--border); }
+.chat-markdown :not(pre) > code {
+  border-radius: 4px;
+  background: var(--secondary);
+  padding: 0.15em 0.35em;
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+}
+.chat-markdown .chat-code-block {
+  margin: 1em 0;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--color-background-200);
+}
+.chat-markdown pre {
+  max-height: 32rem;
+  margin: 0;
+  overflow: auto;
+  padding: 0.9rem 1rem;
+  font-size: 12px;
+  line-height: 1.7;
+  white-space: pre;
+  overflow-wrap: normal;
+}
+.chat-markdown pre code { padding: 0; background: transparent; font-family: inherit; font-size: inherit; }
+.chat-markdown-table {
+  max-width: 100%;
+  margin: 1em 0;
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.chat-markdown table { width: 100%; border-collapse: collapse; font-size: 0.93em; }
+.chat-markdown :is(th, td) { min-width: 6rem; border-bottom: 1px solid var(--border); padding: 0.6rem 0.75rem; text-align: left; vertical-align: top; }
+.chat-markdown th { background: var(--secondary); font-weight: 600; }
+.chat-markdown tr:last-child td { border-bottom: 0; }
+.chat-markdown .contains-task-list { padding-inline-start: 0; list-style: none; }
+.chat-markdown .task-list-item { list-style: none; }
+.chat-markdown .task-list-item input { margin-inline-end: 0.5em; accent-color: var(--foreground); }
+.chat-markdown img { display: block; max-width: 100%; height: auto; margin: 0.75em 0; border-radius: 6px; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; scroll-behavior: auto !important; transition-duration: 0.01ms !important; }
+  .shimmer-text { color: var(--color-muted); -webkit-text-fill-color: currentColor; }
+}

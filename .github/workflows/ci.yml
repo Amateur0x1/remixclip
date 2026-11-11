@@ -1,0 +1,128 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: '24.18.0'
+  PNPM_VERSION: '10.33.2'
+  REMIXCLIP_NODE_VERSION: '24.18.0'
+  # The lockfile stores integrity hashes only, so the registry is chosen at install
+  # time. Pin the public registry here; a mirror configured in a developer's global
+  # .npmrc must never leak into CI.
+  NPM_CONFIG_REGISTRY: https://registry.npmjs.org
+
+jobs:
+  checks:
+    name: Typecheck + i18n + packaging tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # Workspace packages export types from dist/, so downstream typecheck needs them built.
+      # apps/packaged resolves @remixclip/daemon and @remixclip/desktop through generated d.ts.
+      - name: Build typecheck dependencies
+        run: |
+          pnpm -r --filter './packages/*' --if-present run build
+          pnpm --filter @remixclip/daemon build
+          pnpm --filter @remixclip/desktop build
+
+      - name: Generate Next.js route types
+        run: pnpm --filter @remixclip/web exec next typegen
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: i18n key parity
+        run: pnpm i18n:check
+
+      - name: Packaging tool tests
+        run: pnpm --filter @remixclip/tools-pack test
+
+      # Covers the bundled skill catalog the agent reads on demand (needs dist/ from above).
+      - name: Daemon tests
+        run: pnpm --filter @remixclip/daemon test
+
+  extension:
+    name: Browser companion build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Install companion dependencies
+        run: pnpm extension:install
+
+      - name: Build companion
+        run: pnpm extension:build
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: remixclip-companion-ci
+          path: extensions/remixclip-companion/dist
+          if-no-files-found: error
+          retention-days: 3
+
+  package-smoke:
+    name: Package smoke (linux unpacked)
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # Builds the workspace, stages Resources/, packs an unpacked Linux app, then runs the
+      # resource/asar/bundled-runtime checklist. No installer is produced.
+      - name: Build unpacked Linux app
+        run: pnpm exec tools-pack linux build --to dir --json
+
+      - name: Upload packaged app
+        uses: actions/upload-artifact@v4
+        with:
+          name: remixclip-linux-unpacked
+          path: apps/desktop/release/linux-unpacked
+          if-no-files-found: warn
+          retention-days: 3

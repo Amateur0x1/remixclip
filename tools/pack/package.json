@@ -1,0 +1,32 @@
+{
+  "name": "@remixclip/tools-pack",
+  "version": "0.1.0",
+  "license": "Apache-2.0",
+  "private": true,
+  "type": "module",
+  "description": "RemixClip packaging control plane (build, verify, collect)",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "tools-pack": "./bin/tools-pack.mjs"
+  },
+  "files": [
+    "bin",
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.tests.json --noEmit",
+    "test": "tsc -p tsconfig.tests.json && node ./scripts/test.mjs"
+  },
+  "dependencies": {
+    "cac": "6.7.14"
+  },
+  "devDependencies": {
+    "@types/node": "20.19.39",
+    "typescript": "5.9.3"
+  },
+  "engines": {
+    "node": "~24"
+  }
+}

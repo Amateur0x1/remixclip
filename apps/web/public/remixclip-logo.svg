@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="title description">
+  <title id="title">RemixClip</title>
+  <desc id="description">一帧被重新拼接的影片片段：白色与珊瑚色的两个半帧错位咬合，白色半帧中嵌着一枚播放三角。</desc>
+  <defs>
+    <linearGradient id="rc-bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#22222A"/>
+      <stop offset="1" stop-color="#0F0F13"/>
+    </linearGradient>
+    <linearGradient id="rc-accent" x1="0" y1="1" x2="1" y2="0">
+      <stop offset="0" stop-color="#FF4D6D"/>
+      <stop offset="1" stop-color="#FF8A3D"/>
+    </linearGradient>
+    <clipPath id="rc-upper"><polygon points="0,0 63,0 0,63"/></clipPath>
+    <clipPath id="rc-lower"><polygon points="64,1 64,64 1,64"/></clipPath>
+  </defs>
+  <rect width="64" height="64" rx="15.5" fill="url(#rc-bg)"/>
+  <rect x="0.75" y="0.75" width="62.5" height="62.5" rx="14.9" fill="none" stroke="#FFFFFF" stroke-opacity="0.08" stroke-width="1.5"/>
+  <g clip-path="url(#rc-upper)" transform="translate(-1 -1)">
+    <rect x="13" y="13" width="38" height="38" rx="9" fill="#F7F7F8"/>
+    <path d="M23.5 21.6 L32.6 27 L23.5 32.4 Z" fill="#141418" stroke="#141418" stroke-width="1.6" stroke-linejoin="round"/>
+  </g>
+  <g clip-path="url(#rc-lower)" transform="translate(1 1)">
+    <rect x="13" y="13" width="38" height="38" rx="9" fill="url(#rc-accent)"/>
+  </g>
+</svg>

@@ -1,0 +1,74 @@
+appId: com.remixclip.app
+productName: RemixClip
+copyright: Copyright © 2026 RemixClip
+
+directories:
+  output: release
+
+# Only the compiled Electron shell goes into app.asar. Everything the daemon needs at runtime
+# is shipped as extraResources (see apps/desktop/src/main/index.ts for the contract).
+files:
+  - dist/**/*
+  - package.json
+
+extraResources:
+  - from: .release-stage/daemon
+    to: daemon
+  # electron-builder prunes node_modules from extraResources; ship the daemon's production
+  # dependencies explicitly so `require()` keeps resolving inside the bundle.
+  - from: .release-stage/daemon/node_modules
+    to: daemon/node_modules
+  - from: .release-stage/web-out
+    to: web-out
+  - from: .release-stage/node
+    to: node
+  - from: .release-stage/extension
+    to: extension
+  # Markdown skill library the agent reads on demand (see apps/daemon/src/skills.ts).
+  - from: .release-stage/skills
+    to: skills
+  # LICENSE / NOTICE / THIRD_PARTY_NOTICES.md, plus the companion extension's notices.
+  - from: .release-stage/licenses
+    to: licenses
+  - from: assets/remixclip.png
+    to: remixclip.png
+
+asar: true
+# The desktop package has no production dependencies; native modules live inside the bundled
+# daemon, whose Node ABI is pinned by the Node runtime we ship in extraResources.
+npmRebuild: false
+artifactName: ${productName}-${version}-${os}-${arch}.${ext}
+
+mac:
+  category: public.app-category.video
+  icon: assets/remixclip.png
+  # Signing is decided by tools-pack (`--sign auto|always|never`); electron-builder auto-discovers
+  # CSC_LINK/CSC_NAME only when tools-pack turns CSC_IDENTITY_AUTO_DISCOVERY on.
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  notarize: false
+  target:
+    - dmg
+    - zip
+
+dmg:
+  title: ${productName} ${version}
+
+win:
+  icon: assets/remixclip.png
+  target:
+    - nsis
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  deleteAppDataOnUninstall: false
+
+linux:
+  icon: assets/remixclip.png
+  category: AudioVideo
+  executableName: remixclip
+  synopsis: Local-first workspace for agent-assisted content work
+  target:
+    - AppImage

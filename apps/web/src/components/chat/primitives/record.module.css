@@ -1,0 +1,1862 @@
+/*
+ * [INPUT]: the neutral theme from chat-tokens.css and the execution-record atom class names.
+ * [OUTPUT]: shared styles for Foldable / ToolRow / StatusMark / SayText / FileButton.
+ * [POS]: CSS Module for the execution-record family of atoms; layout and grey-scale state motion.
+ *
+ * Why these atoms share **one** CSS Module instead of one file each:
+ * in the design spec their sizes **interlock** — the indent is a function of nesting depth
+ * (`.fold .body.mod-stack > .fold > summary` 11px at one level, 33px at two),
+ * tool rows inside the shell must cancel the shell's own -7px margin, and each vertical rule's
+ * start is measured from its own 0 point. Split into five files and :global or passed-in
+ * className would have to punch through each other, and any cascade change would misalign.
+ * The repo convention requires "CSS refactors must preserve cascade semantics", so this
+ * family lives together under one owner.
+ *
+ * Rule: consume only --chat-* (see ChatRoot.module.css), never global tokens, no [data-theme]
+ * branches. Every value comes from the delivery spec `docs/design/chat-panel-next.html`;
+ * check the spec before changing a number.
+ */
+
+/* ── Foldable block ─────────────────────────────────────────── */
+
+.fold {
+  border: 0;
+  border-radius: var(--chat-radius);
+  background: var(--chat-bg-panel);
+}
+
+.fold > summary {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 11px;
+  cursor: pointer;
+  list-style: none;
+  font-size: var(--chat-t-mini);
+  color: var(--chat-text-strong);
+  border-radius: var(--chat-radius);
+}
+
+.fold > summary::-webkit-details-marker { display: none; }
+.fold > summary::marker { content: ''; }
+.fold > summary:hover { background: var(--chat-bg-fill-tertiary); }
+
+/* Not expandable (a todo with no content this round, D35): no longer a hit area, no chevron */
+.fold.leaf > summary { cursor: default; }
+.fold.leaf > summary:hover { background: none; }
+
+/*
+ * Title, duration and chevron are three independent slots. In a narrow sidebar only the
+ * title slot shrinks: the duration never wraps and the chevron is never squeezed out by the
+ * title. The inner layer is still flex, because the title itself may be a status dot / icon
+ * plus text; its last text node or an explicit `.name` carries the truncation.
+ */
+.summaryContent {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+}
+.summaryContent > :last-child,
+.summaryContent > .name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* A failed command header is icon + .name + fail button; truncate the title only, not the action. */
+.summaryContent:has(> .name) > :last-child:not(.name) {
+  flex: none;
+  overflow: visible;
+}
+
+.chev {
+  flex: none;
+  margin-left: auto;
+  display: inline-flex;
+  transition: transform var(--chat-dur-quick) var(--chat-ease-out);
+}
+.fold[open] > summary .chev { transform: rotate(180deg); }
+.meta + .chev { margin-left: 0; }
+
+/* The spec only puts "push to the far right" on the **fold header** (`.fold > summary .ms`);
+   the tool-row one is `.tool .ms { flex: none }` — pushed over by `.nm { flex: 1 }`,
+   carrying no auto margin itself. We used auto everywhere, so tool rows measured
+   500-plus pixels of left margin. */
+.meta {
+  flex: none;
+  margin-left: auto;
+  font-family: var(--chat-font-mono);
+  font-size: var(--chat-t-cap);
+  color: var(--chat-text-soft);
+  white-space: nowrap;
+}
+/* Both the tool row's and the fold header's duration are complete, unwrapped info; narrow widths yield via the title slot. */
+/* Counters ("2 places", "2/4") use text font + tabular figures, not full mono */
+.meta.num {
+  font-family: inherit;
+  font-variant-numeric: tabular-nums;
+}
+/*
+ * The only scene with **two** `.meta` in one row: the image batch row's "2/4" + live duration
+ * (product 2026-09-03 extended "every in-progress row reports its duration" to this tier).
+ * If both carry `margin-left: auto`, flex **splits** the slack between the two auto margins
+ * and the counter drifts to the middle of the row. Zero the second so it hugs the first
+ * (spacing comes from `.tool`'s `gap: 7px`) — same reasoning as the `.meta + .chev` rule.
+ */
+.meta + .meta { margin-left: 0; }
+
+.fold .body{
+  padding: 0 11px 11px;
+  font-size: var(--chat-t-mini);
+  line-height: var(--chat-lh-body);
+  color: var(--chat-text-muted);
+}
+.fold[open] > summary + .body { padding-top: 4px; }
+
+/* Container for a stack of children (tool rows, todo drawer): drop its own frame, each row has one */
+.fold .body.stack {
+  display: flex;
+  flex-direction: column;
+  padding: 0 0 8px;
+  color: var(--chat-text);
+}
+.fold[open] > summary + .body.stack { padding-top: 2px; }
+/*
+ * Every row inside the shell sheds its own frame: border, fill and radius are all flattened,
+ * rows separated by spacing alone.
+ *
+ * **The `.fold ` ancestor cannot be dropped**. The delivery spec says `.fold .body.mod-stack > *`,
+ * specificity (0,3,0); a failed row's `.tool.is-fail` (red border, red fill) is (0,2,0) — the
+ * former wins, so a failed row inside the shell has **only its icon and the word "failed" in
+ * red**, on a transparent ground (measured on the real spec: `background: rgba(0,0,0,0)`,
+ * `border: 0px none`). Red border and fill belong only to tool rows standing **outside** a shell.
+ *
+ * Dropping `.fold ` drops this to (0,2,0), a tie with `.tool.fail` decided by source order, and
+ * the red fill leaks out across the whole row. Neither unit tests nor the showcase page catch
+ * this (they don't compute cascade), so don't drop it again.
+ */
+.fold .body.stack > * {
+  border: 0;
+  background: none;
+  border-radius: 0;
+  width: auto;
+  margin: 0;
+  padding: 5px 11px;
+}
+.fold .body.stack > .fold{ padding: 0; }
+.fold .body.stack > .fold > summary{ padding: 5px 11px; border-radius: 0; }
+.fold .body.stack > .fold > summary:hover{ background: var(--chat-bg-fill-tertiary); }
+/* One more nesting level (shell → todo → child): indent +22px, aligned with the leading icon */
+.fold .body.stack .body.stack > .fold > summary { padding-inline-start: 33px; }
+.fold .body.stack .body.stack{ padding-bottom: 2px; }
+
+/* ── Shell (outermost layer, frameless) ─────────────────────── */
+
+.fold.flat {
+  border: 0;
+  background: none;
+  border-radius: 0;
+}
+/*
+ * ── ⚠️ There **used to** be an accordion transition here for shell collapse; withdrawn ──────
+ *
+ * It read `.fold.flat::details-content { display:grid; grid-template-rows:0fr→1fr;
+ * overflow:hidden }` + `content-visibility … allow-discrete`, meant to stop "collapse as soon
+ * as done" (`ExecutionShell`'s `concluded`) from yanking still-streaming body text up.
+ *
+ * Why withdrawn: the user reported a layout defect on a real device on 2026-09-04 — **the
+ * thinking body's height-capped box (`.body.scroll`, `max-height:96px`) could not scroll to
+ * the bottom**, the last line clipped at the lower edge. This rule was the only change that
+ * touched the shell body's **formatting context** (turning `.body` from a normal-flow block
+ * into a grid item, with an extra `overflow:hidden` around it), so it was the prime suspect —
+ * and it was **not something any product decision asked for** — product only wanted the
+ * collapse **timing** moved earlier to done. Suspects removable at zero cost go first.
+ *
+ * ⚠️ Honestly: the evidence does not point at it. The user said "a refresh fixes it", and a
+ * pure CSS rule applies **identically** after a refresh, fixing nothing and breaking nothing;
+ * what actually changes on refresh is that round's state and the follow/escape latch in
+ * `useThinkingFollow`. So the likelier direction is that side, not here.
+ * The full original text and reasoning are in this handoff; paste it straight back to A/B.
+ *
+ * ⚠️ **Next person who wants to add it back**: first verify in a **real browser**, with
+ * "content growing while layout is being computed", that the height-capped box still scrolls
+ * to the bottom. jsdom does no layout (`scrollHeight` / `clientHeight` are always 0), and this
+ * repo's "actually run the cascade" ruler only resolves cascade, not layout —
+ * **green unit tests are not evidence here**. The guard lives in
+ * `tests/components/chat/shell-collapse-on-done.test.tsx`: "no extra formatting context".
+ */
+/*
+ * Ink for the task-progress family — **dark body colour**, not muted grey.
+ *
+ * ## 2026-09-02 reversal: the whole family goes from muted grey back to dark
+ *
+ * The previous version had `#a3a3a3` here, following the spec at the time. That afternoon
+ * design **reversed** that entirely in `104fc5c5dc` (not a patch, a reversal); the latest spec
+ * `361b78253e` says:
+ *   `.fold.mod-flat { --progress-detail-ink: var(--text-strong) }` (components.css:1066)
+ * and its comment changed too: "step summaries and normal command rows **follow the step title
+ * colour**, do not link to the Thinking scroll stream".
+ * After seeing the latest spec in a browser on 2026-09-02, the user confirmed: "align with his
+ * design spec, that's what we discussed before".
+ *
+ * So the whole family (between-step summaries / step durations / foldable command rows / every
+ * cell of a tool row) is now `--text-strong`, `#202020` in the light theme — byte-for-byte the
+ * same as the product's `--chat-text-strong`.
+ *
+ * ## The terminal block does **not** reverse with it — it now has its own token
+ *
+ * In the latest spec `.term` / `.term.mod-cmd` / `.term .er` are still the literal `#A3A3A3`
+ * (components.css:2419 / 2439 / 2450), while the rule that darkens the whole family hangs off
+ * `.fold.mod-flat .tool` and `--progress-detail-ink`, **out of reach of the terminal block**.
+ * The previous version had the terminal block inherit this token from `.fold.flat` — same
+ * value on both sides then, so nothing showed; after the reversal one variable would have to
+ * give two values at once, which it can't. So the terminal block got its own
+ * `--chat-terminal-ink` (see `.term` below); each side has its own source.
+ * Guards pinned in `record-progress-ink-latest-spec.test.tsx`: one watches "progress goes darker",
+ * one watches "terminal stays lighter" — drop either and "flip one, flip all" gets through.
+ *
+ * ## Why both selectors declare it
+ *
+ * Two kinds of box consume it: the layers inside a flat shell, and **the tool row itself**.
+ * The spec writes literals rather than `var(…)` in the `.tool` family precisely because a tool
+ * row isn't guaranteed to live in a flat shell (in the spec it can also appear standalone).
+ * The product side writes no literals (repo convention: component CSS Modules only consume
+ * `--chat-*`), so instead **whoever uses it declares it once** — the value still has one source.
+ */
+/* Both owners on the **same line** for a reason: `record-label-rail.test.ts` looks for the `.tool`
+   rule by a line-start anchor (`^\.tool\s*\{`) to read `gap`, and a line break makes it hit this one first. */
+.fold.flat, .tool { --chat-progress-detail-ink: var(--chat-text-strong); }
+/*
+ * The total duration on the shell header's own row (added in spec 1042:
+ * `.fold.mod-flat > summary .ms { color: var(--text-strong) }`).
+ * The base `.fold > summary .ms` is `--text-soft` (#848484) — that tier is for fold headers
+ * **elsewhere**; the flat shell's row goes dark with the rest of the family.
+ */
+.fold.flat > summary .meta { color: var(--chat-text-strong); }
+/*
+ * ⚠️ **Deliberate deviation from the spec: shell header 12 → 13 (product decision 2026-09-02).
+ * The next person checking against the spec must not revert it.**
+ *
+ * The spec (`729fa43ce7`) has exactly one source for the shell header's size:
+ * `.fold > summary { font-size: var(--t-mini) }` = **12px**; the flat-shell rule
+ * `.fold.mod-flat > summary` only sets margin / padding / radius / weight, **not size**.
+ * We were value-for-value identical — not a single character copied wrong.
+ *
+ * But in the spec that same header is **not one size while running vs finished** (measured
+ * tier by tier in a real browser):
+ *   · "in progress 31s" lives inside `.shimmer` (the sweep needs it for `background-clip`),
+ *     and `.shimmer` carries `font-size: var(--t-body)` → **13px**;
+ *   · when done the shimmer is removed, back to plain text in summary → picks up `--t-mini`
+ *     → **12px**.
+ * So at the instant the run ends, the shell header title **shrinks by 1px**.
+ *
+ * The user decided on 2026-09-02: **raise it to 13px so both states match**. Hence the size
+ * added here, covering the three end states "completed" / "stopped" / "run failed" (the
+ * running state is already 13, leave it).
+ *
+ * ⚠️ This is **not** "the spec was wrong", nor "design forgot to change it" — both tiers in
+ * the spec make sense (the sweep tier is naturally 13, the static tier follows the generic
+ * fold header at 12). Product chose the "same size" outcome.
+ * Deleting this / reverting to `--chat-t-mini` per the spec = undoing the decision; go to
+ * product first, don't "align-fix" it.
+ *
+ * ## Why this layer
+ *
+ * `.fold.flat > summary` (0,2,1) only reaches **the top-level shell's own row** — the flat shell
+ * exists in exactly one place (the execution record, `ExecutionShell`'s `variant="flat"`),
+ * and every drawer inside it is a `.fold` without `.flat`. The base `.fold > summary` is
+ * untouched, so fold headers in step drawers stay 12px; the total duration on the right of the
+ * shell header doesn't grow either (`.meta` sets `--chat-t-cap` itself).
+ * Guards pinned in `tests/components/chat/w79-shell-head-type-scale.test.tsx`:
+ * the three positive states + the "all four states same size" equation, plus a whole set of
+ * negative controls (drawer 12 / duration 12 / step row, tool row, opener cell untouched).
+ */
+.fold.flat > summary {
+  margin-inline: -7px;
+  padding: 6px 7px;
+  border-radius: var(--chat-radius-sm);
+  font-size: var(--chat-t-body);
+  font-weight: 600;
+}
+/*
+ * Spec: `.fold.mod-flat summary .ms, .fold.mod-flat summary .chev { margin-left: 0 }`
+ *
+ * Two things to copy:
+ *  1. **`.ms` too** (ours is called `.meta`) — previously only `.chev` was set, so the seconds
+ *     were flung to the row end by `.meta { margin-left: auto }`; in the spec they hug the text.
+ *  2. **A descendant selector, not `>`** — the spec rule covers **every** summary in the whole
+ *     flat shell, including each todo drawer; written as `>` it only covers the shell's own row
+ *     and drawers' seconds and chevrons still get thrown far right.
+ */
+.fold.flat summary .meta,
+.fold.flat summary .chev { margin-left: 0; }
+/*
+ * The shell body's own padding.
+ *
+ * ⚠️ Five variables used to hang here too (`--row-slot` / `--row-pad-block` / `--chain-gap` /
+ * `--chain-x` / `--row-outdent`), all serving **the vertical rule that chained the steps**:
+ * the rule's axis, where the rule starts to clear the status dots, how far each row box
+ * overhangs to the left. A design decision on 2026-09-02 removed that rule entirely, leaving
+ * the five with no consumers — cleared together, no dead code kept "in case the rule returns".
+ * If it really returns, re-deriving from that day's measurements beats reading old constants.
+ *
+ * **The two columns themselves are unchanged**, they come from selector layering, not from
+ * these variables:
+ *   · direct children of the shell body (top level) start at **0**
+ *   · child rows **inside** a step land at **22** (spec: "indent one notch (status dot 15 + gap 7 = 22)")
+ */
+.fold.flat > .body.stack {
+  padding: 0 0 2px;
+}
+.fold.flat[open] > summary + .body.stack {
+  border-top: var(--chat-stroke) solid var(--chat-border);
+  padding-top: 6px;
+}
+/* The opener is **body text**: 13px, not the shell's 12px captions (spec: "opener keeps 13px") */
+.fold.flat > .body.stack > .think { padding: 6px 0; font-size: var(--chat-t-body); }
+/*
+ * **Direct children** of the shell body all stand in column 0.
+ *
+ * Three kinds of DOM take this path: expandable steps / tool rows (`details.fold`),
+ * non-expandable tool rows (`div.tool`), and the thinking cell (`details.fold.thoughts`).
+ * In production they are siblings at the same level, and only standing in one column do they
+ * line up — in the spec the top level is all steps, all starting at 0 (measured row by row).
+ *
+ * `margin-inline: -7px` stretches the row's **clickable area** to both sides of the shell, so
+ * the hover fill reaches the edges; each row's `summary`/`padding` then puts content back at 0,
+ * so text and icons still land in column 0.
+ * ⚠️ This cannot be deleted: remove it and every row's hover fill shrinks inwards (pinned by
+ * the two "reverse guards" in `record-chain-scope.test.tsx`).
+ *
+ * ⚠️ This rule also used to carry `position: relative` and `--row-outdent: 7px`, both serving
+ * **only** the absolute positioning of that vertical rule (withdrawn 2026-09-02), cleared too.
+ */
+.fold.flat > .body.stack > :is(.fold, .tool) {
+  margin-inline: -7px;
+}
+/* This shell carries a todo list — used only as a cascade hook. A custom property nobody reads
+   rather than an empty block: empty rules get optimised away by the CSS Module, leaving
+   `styles.hasTodo` undefined and the marker silently dead. */
+.hasTodo { --has-todo: 1; }
+
+/*
+ * The narrative **between** two steps must pick up the rule too, shifted right 22px to clear it.
+ * Spec: `.fold.mod-flat > .body.mod-stack > .fold ~ .think:has(~ .fold)` (plus its ::before).
+ * `:has(~ .fold)` is the "there are more steps after this" test — the closing narrative has
+ * no step after it, so it doesn't join the rule.
+ *
+ * **Two deviations from the spec, both measured** (2026-08-27):
+ *
+ * ① `:is(.fold, .tool)` instead of `.fold` alone. Steps have **two DOM shapes**: expandable
+ *    ones (commands with output) go through `Foldable` → `details.fold`; non-expandable ones
+ *    (read / edit / search) are the `div.tool` that `ToolRow` returns directly. Feeding a real
+ *    recording into the render, the shell actually holds
+ *    `p.think │ div.tool ×4 │ details.fold ×2 │ div.tool │ …` — in the spec demo most steps
+ *    expand so this never shows, but in the real product calls without output are the
+ *    majority, and the sandwiched text **matches nothing at all**, so all of it sits flush
+ *    left while tool rows indent on their own. The spec comment's intent is "there are steps
+ *    on **both** sides, so the text between should join" — it says "steps", not "foldable steps".
+ *
+ * ② ~~`:not(.hasTodo)` — shells with a todo list are excluded~~ **withdrawn 2026-09-02**.
+ *
+ *    That exception used to hang here, citing the user's 2026-08-27 line "for indentation check
+ *    whether there's a todo, if the text isn't under the todo, look, it's like this", with a
+ *    screenshot of a shell that has a todo list and an opener flush left.
+ *    **But it blocked the wrong thing**: the opener is flush left because of the selector
+ *    itself — `:is(.fold, .tool) ~ .think` requires **a cell already before** this text, and
+ *    the opener is the shell body's first child, so it never matched anyway. Measured cell by
+ *    cell on the real DOM (the shell with a plan):
+ *
+ *      p.think(opener) │ details.fold(execution plan) │ details.fold(step) │ p.think(summary)
+ *      │ details.fold(step) │ p.think(summary) │ details.fold(step) │ p.think(closing)
+ *
+ *    The opener is first (no predecessor) and the closing is last (no successor), both out on
+ *    their own; what `:not(.hasTodo)` really blocked is **the two summaries in the middle** —
+ *    exactly the ones the spec calls out for 12px + muted grey + 22px indent + joining the
+ *    rule. The side-by-side screenshot the user pointed at on 2026-09-02 is this: in product
+ *    they are 13px dark.
+ *
+ *    And `hasTodo` also counts `kind === 'plan'` (`ExecutionShell`), so **if this round produced
+ *    an execution plan, the whole rule mismatches**. The user's screenshot has "execution plan
+ *    · 4 steps" right there — guaranteed to hit it.
+ *
+ * Two kinds of text, two treatments, by **structural position**, not by whether the shell has
+ * a todo list:
+ *   opener (no step before)     13px + `--chat-text-strong`, from `:has(> .fold) > .think` below
+ *   between-step summary (both) 12px + muted grey + 22px + joins the rule, i.e. this rule
+ *
+ * The `.hasTodo` class itself stays — it has other uses, and it is the living footnote for the
+ * "empty rules get optimised away" pit (see the `.hasTodo` comment above).
+ *
+ * See `specs/current/chat-panel-feedback.md` §F-11.
+ */
+.fold.flat > .body.stack > .stepRow ~ .think:has(~ .stepRow) {
+  padding-inline-start: 22px;
+  /* Spec 1071-1076 (this cell changed in `104fc5c5dc`): "the between-step summary is **13px
+     like body text**, but at regular weight so it doesn't overpower the step title". The
+     previous version was 12px + muted grey, matching the pre-reversal "whole family one step
+     back"; after the reversal it shares the step title's colour and ranks by **weight**,
+     not by size / ink. */
+  font-size: var(--chat-t-body);
+  font-weight: 400;
+  color: var(--chat-progress-detail-ink);
+}
+/* Inline code carries its own --chat-text-strong; without inherit, a muted run leaves black blocks */
+.fold.flat > .body.stack > .stepRow ~ .think:has(~ .stepRow) code {
+  color: inherit;
+}
+/*
+ * Step title 13px / 500 (PR #7170: "unify the execution plan and step titles at 13px / 500,
+ * shared by in-progress, completed and expanded/collapsed").
+ *
+ * This used to be "inherit 12px + 600", on the grounds that "the node is one notch heavier than
+ * the description, so the eye has an anchor when scanning". This spec revision changed approach:
+ * the anchor comes from **size** (13 is one notch above the surrounding 12), not weight, and
+ * weight comes back to 500 — so no two things shout at once inside one shell.
+ */
+.fold.flat > .body.stack > .fold > summary {
+  padding: 5px 7px;
+  border-radius: var(--chat-radius-sm);
+  font-size: var(--chat-t-body);
+  font-weight: 500;
+}
+/* The duration is a caption: weight follows the title at 500, ink drops to that muted grey tier */
+.fold.flat > .body.stack > .fold > summary .meta {
+  font-weight: 500;
+  color: var(--chat-progress-detail-ink);
+}
+/* Hover-fill radius matches the in-shell tier (spec: `… .fold > summary:hover { border-radius: var(--radius) }`) */
+.fold.flat > .body.stack .fold > summary:hover { border-radius: var(--chat-radius); }
+/*
+ * The opener **stays dark body ink** (PR #7170: "the opener keeps the dark body colour").
+ *
+ * This rule used to be `--chat-text-muted`, matching the "step at 600" scheme above: with the
+ * title heavier, the description had to step back or two things would shout in one block. Now
+ * the title is back at 500, that premise is gone — dimming further would make "a whole paragraph
+ * lighter than a single title line", and this paragraph is exactly what must be read through.
+ */
+.fold.flat > .body.stack:has(> .fold) > .think { color: var(--chat-text-strong); }
+/*
+ * **Top-level tool rows stand in column 0, skipping that 22px indent** (user decision 2026-08-27).
+ *
+ * The user's words: "aren't you supposed to decide the spacing dynamically? Like here, outside a
+ * todo, shouldn't there be no indent? Tool calls outside a todo shouldn't have this indent
+ * either, right?" — illustrated by an empty cell to the left of a top-level "thinking process".
+ *
+ * This rule used to be `padding: 5px 7px 5px 29px` (icon at 22), copied from the spec's
+ * `.fold.mod-flat > .body.mod-stack > .tool`. **Copied from the wrong place, not with wrong
+ * values**: that rule **never matches once** in the spec's own 84 cells (counted by loading the
+ * delivery spec in Chrome; `.fold.mod-flat > .body.mod-stack > .tool` hits 0) — in the spec a
+ * tool row always lives **inside** some step, the top level is all steps. Its comment states the
+ * precondition too: "when the fold header is itself a step, the tool rows under it are that
+ * step's children".
+ *
+ * Our shell header is always "in progress / completed", never a step — a top-level tool row has
+ * no "whose child" to be, it is a cell of the chain in its own right. Indenting it by 22 is
+ * yielding to a parent step that doesn't exist.
+ *
+ * The 22 column is **inside a step** (spec: "indent one notch (status dot 15 + gap 7 = 22)"),
+ * governed by the two nested rules below, not by this. Full convention for both columns in
+ * `specs/current/chat-panel-feedback.md` §F-18.
+ *
+ * ⚠️ [Product decision 2026-09-02: the 7px here stays as is, not the spec's 8px]
+ * The spec `729fa43ce7` has `.tool { gap: 8px }`, 1px off from ours. That 1px was changed
+ * deliberately by `9005070d67` for OPEND-2516, and `record-label-rail.test.ts` guards the
+ * invariant "tool row and fold header share one gap".
+ * And the spec itself is **staggered** on this screen — step names at 22, foldable tool rows at
+ * 23, flat tool rows at 24; we unified the tool-row family into one column. Both conventions
+ * can't hold at once; product chose ours.
+ * **Don't change it to 8px when checking against the spec** — that's undoing a decision, not
+ * fixing a drift.
+ */
+.fold.flat > .body.stack > .tool { padding: 5px 7px; }
+/*
+ * The thinking cell has no indent rule of its own — it is a top-level cell, same column as
+ * steps and tool rows.
+ *
+ * There used to be a `.fold.flat > .body.stack > .fold.thoughts > summary
+ * { padding-inline-start: 29px }` pushing it to 22 to line up with the tool rows of the time.
+ * That 22px on tool rows was itself wrong (see the previous rule), and aligning to a wrong
+ * position only spreads the error; it is what the user pointed at on 2026-08-27, asking about
+ * the empty slot to the left of a top-level Thoughts: "shouldn't there be this indent?"
+ *
+ * The user's original "same indent logic as wherever toolrow is" still holds —
+ * except "wherever toolrow is" moved back to column 0 as well, so they remain in one column.
+ */
+/*
+ * Row indent after one nesting level. Both spec rules have **two comma segments**:
+ *   `.fold .body.mod-stack .body.mod-stack > *,
+ *    .fold .body.mod-stack .body.mod-stack > .fold > summary { padding-inline-start: 33px }`
+ *   `.fold.mod-flat …  > *, .fold.mod-flat … > .fold > summary { padding-inline-start: 29px }`
+ *
+ * 33 = status dot 15 + gap 7 + 11, so the two levels' status dots each get a column; the flat
+ * shell's 29 is the same vertical rule after adding back its own -7px negative margin.
+ *
+ * Only the `> .fold > summary` half used to be copied and the `> *` half was lost — so **every
+ * non-summary row** in a nested drawer (tool rows, description paragraphs) under-indented by
+ * 18px (29 − 11) and the whole column sat one notch left of the spec. Property-by-property
+ * diffing can't see it (their own padding values were "never written by the spec"), only
+ * measuring positions exposes it.
+ */
+/*
+ * `.body.stream` takes **the same** indent as `.body.stack` (2026-08-27).
+ *
+ * The thinking cell has two bodies: finished is `.body.stack` (click to read), still thinking is
+ * `.body.stream` (96px height-capped window). The indent was written only for `.stack`, so the
+ * two states' text left edges landed at 22px and 4px — a 18px sideways jump the moment thinking
+ * ends. They are the same text on the same row; the column must be the same column.
+ * Measured tier by tier in real Chrome; see `specs/current/chat-panel-feedback.md` §F-17.
+ */
+.fold .body.stack :is(.body.stack, .body.stream) > *,
+.fold .body.stack .body.stack > .fold > summary { padding-inline-start: 33px; }
+.fold.flat .body.stack :is(.body.stack, .body.stream) > *,
+.fold.flat .body.stack .body.stack > .fold > summary { padding-inline-start: 29px; }
+/*
+ * The spec has an **exception** right after: `.fold.mod-flat .body.mod-stack .body.mod-stack > .fold
+ * { padding-inline: 0 }`. The `> *` rule above indents nested drawers too, but the indent must land
+ * on the drawer's **summary**, not on the drawer box — on the box, the whole drawer (with its
+ * hover fill, vertical guide and terminal blocks) shifts right 29px and narrows 29px, instead
+ * of just that line of text indenting.
+ * We already had the same exception for one level (`.fold .body.stack > .fold { padding: 0 }`);
+ * this two-level one was missed.
+ */
+.fold.flat .body.stack .body.stack > .fold { padding-inline: 0; }
+.fold.flat > summary .stFail { color: var(--chat-red); }
+
+/*
+ * **A foldable command row drops to muted grey as a whole** (spec components.css:1151-1154):
+ *
+ *   .fold.mod-flat .fold:not(.is-fail) > summary:has(> .ti) { color: var(--progress-detail-ink) }
+ *   .fold.mod-flat .fold:not(.is-fail) > summary:has(> .ti) > :is(.ti, .ms),
+ *   .fold.mod-flat .fold:not(.is-fail) > summary:has(> .ti) > .ti > svg { color: inherit }
+ *
+ * Non-foldable tool rows are handled by `.tool` itself (see "Tool row" below); this rule
+ * covers the **has-output, expandable** kind — it goes through `Foldable` and its summary
+ * inherits `--chat-text-strong` from `.fold > summary`, so two DOMs for one thing came out at
+ * different depths.
+ *
+ * ## The match test is "this row carries a tool icon", not "this row is not thinking"
+ *
+ * The spec's test `summary:has(> .ti)` is **positive**: a tool icon = this is a call.
+ * The leading cell of a step (todo / plan) is a status dot `.mk` (ours: `.mark`), so it never
+ * matches.
+ *
+ * Two structural differences, converted to the product DOM, not copied literally:
+ *  ① our `Foldable` wraps one more layer `.summaryContent` inside summary (the title slot must
+ *    shrink on its own), so the `> .ti` **direct child** is `> .summaryContent > .icon` here;
+ *    `.ms` is still a direct child of summary, `.ti` is not.
+ *  ② `.icon` is **shared by tool rows and the thinking row** (both states of `ThoughtsRow` in
+ *    `ExecutionShell` use it), while the spec hangs `.orb` on the thinking row's head, not `.ti`
+ *    — so the spec's selector naturally skips the thinking row and ours **greys it out too**.
+ *    Product decision 2026-09-02: greying it too is fine, no exclusion added for it.
+ *    No `:not(.thoughts)` style negative fallback: that is using exclusion to dodge a positive
+ *    test that ought to exist.
+ *
+ * ## The failure exception
+ *
+ * The spec guards with `:not(.is-fail)`: a failed row's icon is red (spec 2219
+ * `.fold.is-fail > summary .ti > svg { color: var(--red) }`), and greying the row would cover it.
+ * On the product side `ToolRow` has set `styles.fail` on the foldable branch too since
+ * 2026-09-02 (same as the `div.tool` branches), so this is the literal counterpart of the spec's
+ * `:not(.is-fail)`.
+ * The previous version inferred it from the "failed" marker (`.why`) in summary — workable but
+ * indirect: failure is the **row's** state, so the test belongs on the row.
+ */
+.fold.flat .fold:not(.fail) > summary:has(> .summaryContent > .icon) {
+  color: var(--chat-progress-detail-ink);
+}
+/* Title, duration and icon all follow the row — the spec's "text, duration and marker same colour" */
+.fold.flat .fold:not(.fail) > summary:has(> .summaryContent > .icon) > .meta,
+.fold.flat .fold:not(.fail) > summary:has(> .summaryContent > .icon) .icon,
+.fold.flat .fold:not(.fail) > summary:has(> .summaryContent > .icon) .icon > svg {
+  color: inherit;
+}
+/*
+ * Title and duration **go dark in both states** (spec 1107:
+ * `.fold.mod-flat .fold > summary:has(> .ti) > :is(.nm, .ms) { color: var(--text-strong) }`).
+ *
+ * ⚠️ This rule **deliberately has no** `:not(.fail)` — spec `104fc5c5dc` **removed** that
+ * exclusion. The rule above (whole row + icon) still has it; that split is the spec's own:
+ *   a failed row's **icon** stays red (`.fold.fail > summary .icon`),
+ *   a failed row's **title and duration** go dark — failure is a state, marked by the icon and
+ *   the word "failed"; the title says what the step is doing, not the error itself.
+ * Without this rule a failed command row's duration falls back to the base
+ * `--chat-text-soft` (#848484).
+ *
+ * Converted as above: the spec's `> .nm` is behind a `.summaryContent` layer here, `> .ms` is
+ * still a direct child.
+ */
+.fold.flat .fold > summary:has(> .summaryContent > .icon) > .summaryContent > .name,
+.fold.flat .fold > summary:has(> .summaryContent > .icon) > .meta {
+  color: var(--chat-text-strong);
+}
+
+/* ── Tool row ───────────────────────────────────────────────── */
+
+.tool {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 11px;
+  border: var(--chat-stroke) solid var(--chat-border);
+  border-radius: var(--chat-radius);
+  background: var(--chat-bg);
+  font-size: var(--chat-t-body);
+  /*
+   * **The whole row follows the task progress into dark body ink** (latest spec 2236-2239:
+   * `.fold.mod-flat .tool:not(.is-fail) { color: var(--text-strong) }`, same value for the failure branch).
+   *
+   * ⚠️ On 2026-09-02 morning this was changed to muted grey per the spec of the time, and that
+   * same afternoon `104fc5c5dc` **reversed** it again: the `#A3A3A3` the spec keeps for the
+   * `.tool` family only governs tool rows that appear **standalone**, while the copy sitting
+   * inside `.fold.mod-flat` is overridden to dark by the new whole-family rule. On the product
+   * side `ToolRow` only ever comes out of `ExecutionShell` and always sits in a flat shell, so
+   * the "standalone" tier has no landing spot here —
+   * a single `--chat-progress-detail-ink` is all of it.
+   *
+   * Line-height 1.5 (--lh-row) stays as is; it used to be unset and inherited 1.7 from the
+   * outer layer, making the whole row 2.6px taller.
+   */
+  color: var(--chat-progress-detail-ink);
+  line-height: var(--chat-lh-row);
+}
+.tool + .tool { margin-top: 6px; }
+
+/*
+ * The duration takes the same colour as the whole row (spec `.tool .ms { … color: #A3A3A3 }`, components.css:2189).
+ * The base `.meta` goes through `--chat-text-soft` (#848484) — that is the **fold header**
+ * tier (`.fold > summary .ms { color: var(--text-soft) }`, spec 932), tool rows have their own tier.
+ * Written out here rather than relying on inheritance: a failed row replaces the row's `color`
+ * (see `.tool.fail` below), and the duration should not follow that swap.
+ */
+.tool .meta { margin-left: 0; color: var(--chat-progress-detail-ink); }
+
+.name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/*
+ * The spec's `.nm` is also **two rules with separate scopes**, not one:
+ *   `.tool .nm          { flex: 1;        min-width:0; overflow; ellipsis; nowrap }`
+ *   `.fold > summary .nm { flex: 0 1 auto; min-width:0; overflow; ellipsis; nowrap }`
+ * Identical word for word except flex — so merging them into one bare `.name` looks fully
+ * equivalent, but actually hands the tool row's `flex: 1` to the fold header: the title goes
+ * from "as wide as its text" to "eats the whole row" (123px → 281px), the seconds and chevron
+ * are shoved to the row end (188 → 368), and the whole drawer header no longer matches the spec.
+ */
+.fold > summary .name { flex: 0 1 auto; }
+/*
+ * Tool-row titles are pulled down to **regular weight** (latest spec 2144-2147 adds
+ * `font-weight: 400` to `.tool .nm`). Once the whole family went back to dark, row titles and
+ * step titles share a colour — hierarchy moves to weight: steps 500, rows 400.
+ * Only hung on `.tool`, not bare `.name`: the fold header's 500 comes from summary's own rule,
+ * and merging them would flatten the drawer titles too.
+ */
+.tool .name { font-weight: 400; }
+.name code {
+  /* The global `code` is an inline code chip (fill + 1px 5px padding + radius); the spec's code
+     here is just a monospace file name, no chip. Clear it or every row's file name is a size fatter. */
+  padding: 0;
+  background: none;
+  border-radius: 0;
+  font-family: var(--chat-font-mono);
+  font-size: var(--chat-t-mini);
+  color: var(--chat-text-strong);
+}
+/* When there is a change delta, the row name yields — the delta hugs the name, not pushed to the far right */
+.tool:has(.delta) .name { flex: 0 1 auto; }
+.fold.flat .tool .name { flex: 0 1 auto; }
+
+/*
+ * The leading cell of the row. **Always has an icon** — a product decision on 2026-08-25
+ * forbade dots, and the delivery spec's `.ti:empty::before` dot fallback is withdrawn
+ * (see toolIcon in icons.tsx).
+ *
+ * [Slot 16px, the same width as the icon it holds] (W76). The spec splits this cell into two
+ * tiers by "what it holds", and writes the reason above the rule (`729fa43ce7:components.css:2239-2241`):
+ *
+ *     "tool call icons take 16px; the leading dots of rows without an icon and plan numbers keep their size."
+ *     .tool .ti:has(> svg),
+ *     .fold > summary .ti:has(> svg) { width: 16px; height: 16px; }
+ *
+ * We used to copy only the 16px of `.icon > svg` below and leave the slot at 15 — a 15px box
+ * holding a 16px glyph, which `place-items: center` lets stick out 0.5px on each side.
+ * That `:has(> svg)` line has been in the spec since baseline `361b78253e` and was never copied.
+ *
+ * **Don't copy the `:has(> svg)` condition itself**: the spec adds it to keep dots and plan
+ * numbers at 15, but neither lives in this slot on the product side (dots are cut, numbers are
+ * `.step`). This slot also has one more occupant: the thinking row's "thinking" state holds
+ * `Orb`'s `<canvas>` (`ExecutionShell.tsx`, box 20 + −2px on each side = 16px actual width),
+ * **not an svg** — copying the condition would leave "thinking" at 15 and "thought process"
+ * jumping to 16, the left edge hopping between the two states,
+ * exactly what `thinking-embedded.test.tsx` pins down as forbidden.
+ * So what is copied is that value and intent (icon slot = as big as the icon); the condition
+ * is always true here.
+ *
+ * ⚠️ `.step` (plan number) and `.mark` (status mark) **do not move**, matching the spec's
+ * `.pk` / `.mk`; both stay 15 throughout. Guarded by `tests/components/chat/w76-icon-slot.test.tsx`.
+ */
+.icon {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  display: grid;
+  place-items: center;
+  color: var(--chat-text-strong);
+}
+/*
+ * Icons follow the whole row's colour (spec `.ti > svg { … color: #A3A3A3 }`, components.css:2217).
+ * It used to be `--chat-text-soft` (#848484) — one more depth of grey mixed into a stack of
+ * grey rows makes the eye think the icon column is emphasising something.
+ *
+ * [The size is 16px, not 14px] (OPEND-2196 gap B). The `components.css:2217` quoted above
+ * is the `8015870095` design revision, where **size and colour are in one declaration**:
+ *
+ *     .ti > svg { width: 16px; height: 16px; color: #A3A3A3; }
+ *
+ * At the time only the colour was copied and width stayed at the 14px of an older spec
+ * (`1bbdce0b06:1938`). Quoting that line but copying only half is the whole cause of the gap.
+ * The latest spec `853da24ea5:2173` is still 16px.
+ * The stroke width follows the size (1.75 user units × 16/24 = 1.167px), guarded by
+ * `tests/components/chat/icon-stroke-weight.test.tsx`.
+ */
+.icon > svg { width: 16px; height: 16px; color: var(--chat-progress-detail-ink); }
+/* Failed row: mark and icon turn red, red only flags the one that needs attention (spec 2218 / 2223, one rule per layer) */
+.tool.fail .icon,
+.fold.fail > summary .icon { color: var(--chat-red); }
+.tool.fail .icon > svg,
+.fold.fail > summary .icon > svg { color: var(--chat-red); }
+
+/* The plan's number takes the icon cell — a step not yet run has no "which kind of call" to mark */
+.step {
+  flex: none;
+  width: 15px;
+  text-align: center;
+  font-family: var(--chat-font-mono);
+  font-size: var(--chat-t-cap);
+  /* Spec 2237 also lists `.pk` in the "whole task-progress family goes dark" rule, same tier as
+     the leading icon; the old `--chat-text-soft` (#848484) was left over from the pre-reversal palette. */
+  color: var(--chat-progress-detail-ink);
+}
+
+/*
+ * The change delta `+n −m`. Spec `.tool .dst { flex: none; margin-inline-end: auto;
+ * font-family: var(--mono); font-size: var(--t-cap); font-variant-numeric: tabular-nums;
+ * color: #A3A3A3 }` (853da24ea5 `components.css:2221`, identical word for word to delivery
+ * spec 8015870095) — the same muted-grey tier as the whole row.
+ *
+ * ⚠️ This used to be `--chat-text-soft` (#848484): the **one cell missed** when the previous
+ * round unified the whole tool-row family on muted grey (the `.tool` row, `.tool .meta`,
+ * the inline icon), so within one row "created xxx.html" was #a3a3a3 while the "+182 −0" right
+ * next to it was #848484, one depth darker.
+ *
+ * Like `.tool .meta`, **written out in this cell rather than inherited**: a failed row replaces
+ * the row's `color` (see `.tool.fail` below), and the delta should not follow that swap.
+ */
+.delta {
+  flex: none;
+  margin-inline-end: auto;
+  font-family: var(--chat-font-mono);
+  font-size: var(--chat-t-cap);
+  font-variant-numeric: tabular-nums;
+  color: var(--chat-progress-detail-ink);
+}
+.delta i { font-style: normal; }
+.delta i + i { margin-inline-start: 5px; }
+
+.tool.fail {
+  border-color: var(--chat-red-border);
+  background: var(--chat-red-bg);
+  /* Spec 2238-2239 also lists the failed row **as a whole** in the "whole task-progress family
+     goes dark" rule, same colour as a successful row — red is left only to the leading icon and the word "failed". */
+  color: var(--chat-text-strong);
+}
+.why {
+  flex: none;
+  font-size: var(--chat-t-cap);
+  font-weight: 600;
+  color: var(--chat-red);
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+}
+.why:hover { color: color-mix(in srgb, var(--chat-red) 70%, var(--chat-text-strong)); }
+
+/* ── File name button ───────────────────────────────────────── */
+
+.file {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  border-radius: var(--chat-radius-sm);
+}
+.file code {
+  /* The global `code` is an inline code chip (fill + 1px 5px padding + radius); the spec's code
+     here is just a monospace file name, no chip. Clear it or every row's file name is a size fatter. */
+  padding: 0;
+  background: none;
+  border-radius: 0;
+  font-family: var(--chat-font-mono);
+  font-size: var(--chat-t-mini);
+  /*
+   * **Follows the whole row, doesn't pin its own tier** (spec 2196 `.tool .fn code { … color: inherit }`).
+   * This used to hard-code `--chat-text-strong`, which in the "whole row drops to muted grey"
+   * revision made the file name a tier darker than its row — the spec never darkened it on its
+   * own: it is part of that row, and takes whatever colour the row has.
+   * Today both sides compute to #202020, but the consequence of the different phrasing shows on
+   * a failed row (see the rule below).
+   */
+  color: inherit;
+  /*
+   * **The underline is the resting state, not the hover state** (spec `729fa43ce7`, changed by
+   * `e8726686ae` "underline tool references by default"):
+   *
+   *   .tool .fn code { … text-decoration: underline; text-decoration-color: currentColor;
+   *                    text-underline-offset: 2px; }
+   *
+   * The same change **deleted both** `.tool .fn:hover code` and
+   * `.fold.mod-flat .tool .fn:hover code` — the hover tier is gone entirely, `currentColor`
+   * moved into the resting state, and even `transition` went away (no state left to transition).
+   * The reason the spec spells out: "use a real `<button>` and let `<code>` carry an underline
+   * by default: this is something clickable, **you shouldn't have to hover first to find out**".
+   *
+   * The previous version was "no line at rest, line only on hover", matching those two deleted
+   * rules; written that way, which words in a row are clickable is invisible unless you sweep
+   * the mouse over them one by one.
+   */
+  text-decoration: underline;
+  text-decoration-color: currentColor;
+  text-underline-offset: 2px;
+}
+/* The non-openable tier (files that were read, search patterns, commands) — the same monospace
+   look, but no pointer cursor and **no underline either**: looking clickable and then doing
+   nothing is worse than not looking like a link from the start.
+   Guarded by `runtime/chat/record-file-open.ts`, render branch in `FileButton.tsx`.
+
+   ⚠️ **The spec has no such tier**: its `.fn` is always a clickable `<button>`, so it never
+   wrote down "what a non-clickable file name looks like". And the spec's reason for the
+   underline is precisely "**this is something clickable**, you don't need to hover first to
+   discover it" — handing that mark to a `<span>` that can't be clicked tells a lie with the
+   spec's own mark. So the underline only goes with the clickable tier and is cleared explicitly here.
+   **Whether this tier should get the line too is for product to decide** (W66, listed as pending decision).
+   Written as a resting-state `text-decoration: none` rather than a `:hover` rule: the previous
+   version matched the old "line only on hover" writing, and at rest there was no line anyway, so it blocked nothing;
+   now that the line moved to the resting state, the block has to move with it. */
+.fileStatic { cursor: default; }
+.fileStatic code { text-decoration: none; }
+/* A failed row's file name is dark body ink too (spec 2239 lists the `.is-fail` branch's
+   `.nm code` in the whole-family-dark rule as well). It used to be `--chat-text` (#494949),
+   one tier lighter than the rest of the same row.
+   This one is **kept explicit, as the spec has it**, instead of leaning on the `inherit` above:
+   the spec writes it once per branch, so if a failed row ever changes its whole-row ink, the
+   file name won't drift along. */
+.tool.fail .file code { color: var(--chat-text-strong); }
+
+/* ── Status mark ────────────────────────────────────────────── */
+
+/*
+ * The orb's **carrier span** (spec `.orb`).
+ *
+ * The shell header used to hang `.mark` (the 15×15 status-dot circle) directly on the orb —
+ * the orb's canvas is 24, squeezed into a 15 box; and `<canvas>` is **inline** by default,
+ * taking a baseline and leaving inline descent space below it:
+ * the orb and "in progress" didn't line up vertically and the 7px gap between them was missing.
+ * The showcase page can't show this — the canvas only paints at runtime, so a static render is blank.
+ */
+.orb {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+}
+/* The canvas must be block-level, or the inline baseline leaves a seam under it */
+.orb canvas,
+.mark canvas {
+  display: block;
+}
+/* The spec pulls back the canvas padding per size tier */
+.orb[data-orb-box='24'] { margin-inline: -3px; }
+.orb[data-orb-box='20'],
+.orb:not([data-orb-box]) { margin-inline: -2px; }
+/* The orb inside a tool row pulls back 1px more (spec `.tool .orb`) */
+.tool .orb { margin-inline-start: -1px; }
+
+/*
+ * The leading mark **sits flush with the row start**, it doesn't follow the line height (OPEND-2417).
+ *
+ * It used to be centred by the parent's `align-items: center`, so its position was **a function
+ * of the line height**: once a row grew taller than one line (title wrapping, something taller
+ * hung inline), the mark dropped while the vertical rule chaining the rows starts at a constant,
+ * and the two inevitably miss each other — the user saw "the grey line covering the green
+ * checked icon". The spec's plan card was never centred to begin with: `.steps li .tk { margin-top: 1.5px }`.
+ * 1.5 happens to equal the centring offset of a 12/1.5 line `(18 − 15) / 2`, but it is **a constant**.
+ * Copying that writing frees the mark's box from the line height, which is the only way the
+ * rule's start point can be computed.
+ */
+.mark {
+  flex: none;
+  align-self: flex-start;
+  margin-top: 1.5px;
+  display: grid;
+  place-items: center;
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+}
+.mark svg { width: 10px; height: 10px; }
+/*
+ * "Passed" uses one whole image (--chat-tick-img): a green disc with a knocked-out tick, so the
+ * light and dark themes don't each have to pick a tick colour.
+ * Every use of this mark in the whole spec points at the same image, so swapping it changes one seam only.
+ */
+.mark.ok {
+  background: var(--chat-tick-img) center / contain no-repeat;
+  color: var(--chat-brand-weak);
+}
+.mark.fail { color: var(--chat-red); }
+.mark.fail svg { width: 15px; height: 15px; }
+/* Not started: a dashed ring; cancelled: same as done (D16 — the design spec has a red-cross state, product chose done) */
+/* Spec `.mk.is-run { display: grid; grid-template-areas: "stack"; place-items: stretch;
+   border: 0; border-radius: 50%; overflow: hidden; isolation: isolate }`
+   — in the running tier the orb is this box itself, with several layers stacked inside filling it,
+   not a small thing centred in a `place-items: center` cell.
+   Our orb is drawn on a canvas and sized by box, so stretch changes nothing visually,
+   but the spec wrote these out itself, so the values must match. Hung only on the **step-level** one:
+   the shell header's is `.orb` in the spec, with its own rules; don't change it in passing. */
+/*
+ * The step-level "running" state uses a neutral grey orb, keeping the eight-layer conic gradient,
+ * rotation, highlight and inner rim. All colours come from the --chat-* seams and share the grey scale with
+ * the other state text; it depends on no colour filters.
+ */
+@property --orb-angle {
+  syntax: '<angle>';
+  inherits: false;
+  initial-value: 0deg;
+}
+@keyframes orb-spin { to { --orb-angle: 360deg; } }
+@keyframes orb-drift {
+  0% { transform: translate(-6%, -4%) scale(1.05); }
+  100% { transform: translate(7%, 6%) scale(1.12); }
+}
+.mark.run {
+  --c1: var(--chat-text-soft);
+  --c2: var(--chat-border);
+  --c3: var(--chat-text-strong);
+  --c4: var(--chat-text-muted);
+  --c5: var(--chat-bg);
+  --orb-bg: var(--chat-text-strong);
+  --orb-fill: var(--chat-text-muted);
+  --orb-blur: 1px;
+  --orb-contrast: 1.1;
+  --orb-sat: 1;
+  --orb-shadow: 0.5px;
+  --orb-rim: calc(15px * 0.0625);
+  position: relative;
+  grid-template-areas: 'stack';
+  place-items: stretch;
+  border: 0;
+  border-radius: 50%;
+  overflow: hidden;
+  isolation: isolate;
+  background: var(--orb-fill);
+  animation: none;
+}
+.mark.run::before,
+.mark.run > i {
+  content: '';
+  display: block;
+  grid-area: stack;
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+}
+.mark.run::before {
+  background:
+    conic-gradient(from calc(var(--orb-angle) * 2) at 25% 70%, var(--c3), transparent 20% 80%, var(--c3)),
+    conic-gradient(from calc(var(--orb-angle) * 2) at 45% 75%, var(--c2), transparent 30% 60%, var(--c2)),
+    conic-gradient(from calc(var(--orb-angle) * -1.5) at 32% 26%, var(--c5), transparent 14% 86%, var(--c5)),
+    conic-gradient(from calc(var(--orb-angle) * -3) at 80% 20%, var(--c1), transparent 40% 60%, var(--c1)),
+    conic-gradient(from calc(var(--orb-angle) * 1.5) at 60% 35%, var(--c4), transparent 25% 75%, var(--c4)),
+    conic-gradient(from calc(var(--orb-angle) * 2) at 15% 5%, var(--c2), transparent 10% 90%, var(--c2)),
+    conic-gradient(from calc(var(--orb-angle) * 1) at 20% 80%, var(--c1), transparent 10% 90%, var(--c1)),
+    conic-gradient(from calc(var(--orb-angle) * -2) at 85% 10%, var(--c3), transparent 20% 80%, var(--c3));
+  box-shadow: inset var(--orb-bg) 0 0 var(--orb-shadow) calc(var(--orb-shadow) * 0.2);
+  filter: blur(var(--orb-blur)) contrast(var(--orb-contrast)) saturate(var(--orb-sat));
+  animation: orb-spin 6s linear infinite;
+}
+.mark.run > .sheen {
+  background:
+    radial-gradient(circle at 30% 24%, hsl(0 0% 100% / 0.32), transparent 34%),
+    radial-gradient(circle at 72% 80%, hsl(0 0% 100% / 0.07), transparent 48%);
+  mix-blend-mode: screen;
+  animation: orb-drift 3.2s ease-in-out infinite alternate;
+}
+.mark.run > .rim {
+  box-shadow:
+    inset 0 0 0 1px hsl(0 0% 100% / 0.16),
+    inset 0 var(--orb-rim) calc(var(--orb-rim) * 2) hsl(0 0% 100% / 0.22),
+    inset 0 calc(var(--orb-rim) * -1.2) calc(var(--orb-rim) * 2.4) hsl(0 0% 0% / 0.4);
+  pointer-events: none;
+}
+/* With reduced motion you see a still orb — not a blank, not a spinner */
+@media (prefers-reduced-motion: reduce) {
+  .mark.run::before,
+  .mark.run > .sheen { animation: none; }
+}
+
+/* The spec's `.mk` is one size (15px) across all four tiers and never shrinks the pending one —
+   this used to be 13px, so this mark was two pixels smaller than the rest and the line height drifted with it */
+.mark.pending {
+  border: var(--chat-stroke) dashed var(--chat-border-strong);
+}
+/*
+ * The interrupted step (OPEND-2626). The same circle, the same neutral grey, **solid**.
+ *
+ * A dashed ring in this mark set means "hasn't started"; this one did start, it just didn't
+ * finish — sharing the dashed ring made a run stopped halfway read as "not a single step began".
+ * No red: red is reserved for real errors (the `ExecutionShell.markFor` decision is unchanged).
+ */
+.mark.stopped {
+  border: var(--chat-stroke) solid var(--chat-border-strong);
+}
+
+/* ── Text inside the shell (paragraphs landed by thinking / process narration before done / void reason) ── */
+
+.think {
+  min-width: 0;
+  margin: 0;
+  font-size: var(--chat-t-mini);
+  line-height: var(--chat-lh-body);
+  color: var(--chat-text-strong);
+  overflow-wrap: anywhere;
+  /*
+   * A **single** newline inside a paragraph stays a newline (markdown treats it as a soft break and
+   * flattens it to a space). In-shell narration has always behaved this way, and moving `SayText`
+   * to markdown shouldn't change it in passing.
+   * Code blocks override `white-space` back to `pre` themselves (see `.md-code` below).
+   */
+  white-space: pre-wrap;
+}
+/*
+ * ── The markdown subtree of in-shell narration ────────────────
+ *
+ * `SayText` goes through `renderMarkdown` (user decision 2026-09-03: the shell takes markdown too),
+ * and emits **global** class names `.md-*`, so they must be wrapped in `:global()` — without it the
+ * CSS Module rewrites them to hashed names and not a single rule lands (this pitfall has already
+ * been hit twice in this file, see the `.md-h` rule).
+ *
+ * ⚠️ This copy and `ThinkingMarkdown.module.css` are **two separate files**, not a missed shared
+ * extraction: the `.think` over there is another Module's hashed class name, and merging the two
+ * would need `:global` to punch through or className passing, while this file's cascade was
+ * measured rule by rule on "whose ancestor is longer" (see the `.fold .thoughts > .body > *`
+ * comments). `chat/AGENTS.md` §1b also pins down "the execution-record family shares this one file".
+ * What the two sides must change together is the convention, not the selectors.
+ */
+.think > :global(.md-p),
+.think > :global(.md-h),
+.think > :global(.md-ul),
+.think > :global(.md-ol),
+.think > :global(.md-quote),
+.think > :global(.md-code-block),
+.think > :global(.md-table-wrap),
+.think > :global(.md-hr) {
+  margin-block: 0;
+}
+/* 0.75em between paragraphs — the same convention as the thinking-stream cell */
+.think > :global(*) + :global(*) {
+  margin-top: 0.75em;
+}
+/*
+ * Subheadings **follow their paragraph**, they don't shout on their own.
+ *
+ * Don't copy the `--chat-text-strong` of that rule in `ThinkingMarkdown.module.css`: in-shell
+ * narration splits into two tiers by **position** (dark opener / muted-grey between-step summary,
+ * see `.stepRow ~ .think:has(~ .stepRow)` above), and hard-coding dark would sprout a few bold
+ * black lines inside the muted tier — the user already pointed out the same defect once in the
+ * thinking cell on 2026-09-02. Font size is inherited too: there is no second size tier in the shell.
+ */
+.think :global(.md-h) {
+  color: inherit;
+  font-size: inherit;
+  line-height: var(--chat-lh-row);
+  font-weight: 600;
+}
+.think :global(.md-ul),
+.think :global(.md-ol) {
+  padding-inline-start: 1.5em;
+}
+.think :global(.md-ul) li,
+.think :global(.md-ol) li {
+  margin-block: 0.25em;
+}
+.think :global(.md-quote) {
+  padding-inline-start: 0.75em;
+  border-inline-start: var(--chat-stroke) solid var(--chat-border-strong);
+  color: var(--chat-text-muted);
+}
+.think :global(.md-code-block) {
+  overflow: hidden;
+  border: var(--chat-stroke) solid var(--chat-border);
+  border-radius: var(--chat-radius-sm);
+}
+.think :global(.md-code-header) {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 5px 8px;
+  border-bottom: var(--chat-stroke) solid var(--chat-border);
+  color: var(--chat-text-muted);
+}
+.think :global(.md-code-actions) {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.think :global(.md-code-action) {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 6px;
+  border: 0;
+  border-radius: var(--chat-radius-sm);
+  background: transparent;
+  color: var(--chat-text-muted);
+  font: inherit;
+  cursor: pointer;
+}
+.think :global(.md-code-action:hover) {
+  background: var(--chat-bg-fill-tertiary);
+  color: var(--chat-text-strong);
+}
+.think :global(.md-code) {
+  margin: 0;
+  padding: 8px;
+  overflow-x: auto;
+  /* Overrides `.think`'s `pre-wrap`: long lines in a fence must scroll horizontally, not wrap */
+  white-space: pre;
+}
+.think :global(.md-link) {
+  color: var(--chat-blue);
+  text-decoration: none;
+}
+.think :global(.md-link:hover) {
+  text-decoration: underline;
+}
+.think :global(.md-table-wrap) {
+  max-width: 100%;
+  overflow-x: auto;
+}
+.think :global(.md-table) {
+  border-collapse: collapse;
+}
+.think :global(.md-table) th,
+.think :global(.md-table) td {
+  padding: 4px 6px;
+  border: var(--chat-stroke) solid var(--chat-border);
+}
+.think :global(.md-hr) {
+  border: 0;
+  border-top: var(--chat-stroke) solid var(--chat-border);
+}
+/*
+ * Monospace + one tier smaller. They are written separately for a reason: `.md-inline-code` is a
+ * `<code>`, but the fenced `.md-code` is a `<pre>` — an element-based `.think code` can't reach it.
+ */
+.think :global(.md-inline-code),
+.think :global(.md-code) {
+  font-family: var(--chat-font-mono);
+  font-size: var(--chat-t-cap);
+}
+.think code {
+  font-family: var(--chat-font-mono);
+  font-size: var(--chat-t-cap);
+  color: var(--chat-text-strong);
+}
+
+/* ── Strikethrough: the items with no content this round (D35) ── */
+
+.struck {
+  text-decoration: line-through;
+  color: var(--chat-text-muted);
+}
+
+/* ── The animated status line on the shell header (thinking / in progress) ──
+ * One sweep + three dots. All three status sentences (thinking / in progress / reconnecting) share
+ * this animation, weight pinned at 500 — product call: half a step heavier than body, not yet
+ * at title weight.
+ * Sweep 1.5s, pause 1s (one cycle 2.5s): **the pause is half of this animation** — with no
+ * interval it becomes a ribbon that never stops flowing, which stops drawing attention
+ * (the design spec's own words).
+ */
+.shimmer {
+  background: linear-gradient(
+    90deg,
+    var(--dia-base, var(--chat-text-muted)) 0%,
+    var(--dia-base, var(--chat-text-muted)) 33.33%,
+    var(--chat-dia-1) 40%,
+    var(--chat-dia-2) 45%,
+    var(--chat-dia-3) 50%,
+    var(--chat-dia-4) 55%,
+    var(--chat-dia-5) 60%,
+    var(--dia-base, var(--chat-text-muted)) 66.67%,
+    var(--dia-base, var(--chat-text-muted)) 100%
+  );
+  background-size: 300% 100%;
+  background-clip: text;
+  -webkit-background-clip: text;
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+  font-weight: 500;
+  font-size: var(--chat-t-body);
+  animation: chat-record-sweep 2.5s infinite;
+}
+/* The segment header's line ("in progress") is the same title column as "completed" / "run failed", so it follows that tier */
+.shimmer.head {
+  --dia-base: var(--chat-text-strong);
+  font-weight: 600;
+}
+
+@keyframes chat-record-sweep {
+  0% { background-position: 100% 0; animation-timing-function: cubic-bezier(0.23, 1, 0.32, 1); }
+  60% { background-position: 0% 0; }
+  100% { background-position: 0% 0; }
+}
+
+.dots {
+  display: inline-flex;
+  align-items: flex-end;
+  gap: 2px;
+  margin-inline-start: 3px;
+  /* The 3px box used to sit on the text baseline, which leaves the dots at
+     the bottom of the Chinese glyph. Align the box by its visual middle; the
+     bob animation still moves each dot upward from that centered rest line. */
+  vertical-align: middle;
+}
+.dots i {
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: var(--chat-text-muted);
+  animation: chat-record-dot 1.2s var(--chat-ease-out) infinite;
+}
+.dots i:nth-child(2) { animation-delay: 0.15s; }
+.dots i:nth-child(3) { animation-delay: 0.3s; }
+
+@keyframes chat-record-dot {
+  0%, 60%, 100% { transform: translateY(0); }
+  30% { transform: translateY(-3px); }
+}
+
+/* The shell header's status word when the whole run fails */
+.stFail { color: var(--chat-red); }
+
+@media (prefers-reduced-motion: reduce) {
+  .shimmer { animation: none; color: var(--dia-base, var(--chat-text-muted)); -webkit-text-fill-color: currentColor; }
+  .dots i { animation: none; }
+}
+
+/* ── Command output block (component 11) ──────────────────────
+   The body of an expanded foldable block: one command + its output. **No header, no copy
+   button** (W3) — this is not a code block, it is "what that command looked like in the terminal".
+   Indent follows nesting depth: hung directly under the shell 22px, inside a step 29px, one level
+   deeper is left to the leading-cell alignment. */
+.fold .body.stack .code {
+  margin: 2px 11px 4px 33px;
+  padding: 0;
+  border: var(--chat-stroke) solid var(--chat-border);
+  border-radius: var(--chat-radius-lg);
+  background: var(--chat-bg-panel);
+  overflow: hidden;
+}
+/* The code / terminal block **doesn't take** that row indent: it aligns itself with margins (spec
+   `.fold.mod-flat .body.mod-stack .body.mod-stack > .code { padding-inline-start: 0 }`).
+   The selector must carry `.flat` — one class fewer and it is only (0,4,0), losing to the `> *`
+   rule above at (0,5,0), so the block takes an extra 29px and indents deeper than the spec
+   (this is exactly what the user measured in cell 6). */
+.fold.flat .body.stack .body.stack > .code { padding-inline-start: 0; }
+.fold.flat > .body.stack > .code { margin-inline: 22px 11px; }
+.fold.flat .body.stack .code { margin-inline: 29px 18px; }
+/*
+ * The terminal block of a **top-level** command row follows the top-level column (0), not the
+ * step cell.
+ * User, 2026-09-02: "tool rows outside a todo… shouldn't have any indent" —
+ * the terminal block is what that row spit out; if the row isn't indented, neither is it.
+ * The two numbers 29 / 7 are the same thing written at two layers: row boxes all overhang 7px to
+ * the left, and after adding it back one lands at 22 (the step column), the other at 0 (the
+ * shell's content edge).
+ */
+.fold.flat > .body.stack > .fold > .body.stack > .code { margin-inline: 7px 18px; }
+
+/*
+ * ## The terminal block's three ink tiers: the spec uses **one grey**, the distinction isn't colour
+ *
+ * The spec (latest 361b78253e `components.css:2419 / 2439 / 2450`; delivery spec 8015870095 and
+ * intermediate spec 853da24ea5 identical word for word, only line numbers moving) writes the
+ * literal `#A3A3A3` in all three places:
+ *   `.term        { … color: #A3A3A3 }`   ← normal output
+ *   `.term.mod-cmd{ … color: #A3A3A3 }`   ← the command line
+ *   `.term .er    { color: #A3A3A3 }`     ← the error line
+ *
+ * ⚠️ **This is not flattening three tiers into one and losing the distinction**. The spec moved
+ * the distinction to two other dimensions and wrote the reason in its own comment:
+ *   · command vs output — by the leading `$` (`.term.cmd div::before` below). The spec's words:
+ *     "both blocks share the same terminal ground, the leading $ separates input from output —
+ *       that is the terminal's own convention, no need to invent another marker." The same
+ *       passage also dropped the divider between the two blocks, for the same reason: $ already tells them apart.
+ *   · error vs normal output — by the leading `✗` (`.term .er::first-letter` below, red + 700).
+ *     The spec's words: "the terminal body uses normal dark ink, not red across the row — that is
+ *       code/log content, not the error state itself. Only the leading ✗ marker is red."
+ *   · the success line `.ok` is **not in this tier**, it stays brand green — the semantic colour is not flattened.
+ * So the three same-colour rules below are **deliberate**; if anything degrades, it is the two
+ * markers, not these three colour values.
+ * Guarded by `record-surface-and-terminal-ink.test.tsx` (which watches whether the `$` and the red `✗` are still there).
+ *
+ * ## ⚠️ The terminal block **does not reverse with task progress** — hence its own token
+ *
+ * `104fc5c5dc` pulled the whole task-progress family from muted grey back to dark body ink, but
+ * it **only reaches** the `.fold.mod-flat .tool` and `--progress-detail-ink` rules; the three
+ * literals of the `.term` family stayed put. Measured in a browser on the latest spec: the
+ * terminal block is `rgb(163, 163, 163)`.
+ *
+ * The previous version had the terminal block inherit `--chat-progress-detail-ink` from
+ * `.fold.flat` — same value on both sides then, so it hid the fact that these are two things;
+ * after the reversal one variable would have to give two values at once, which it can't. So it
+ * gets its own `--chat-terminal-ink` here: the value still has a single source (declared on
+ * `.term`, inherited by `.term.cmd` / `.term .er`), while "progress goes darker, terminal stays"
+ * each stand on their own.
+ *
+ * The product side writes no literals (repo convention: component CSS Modules only consume
+ * `--chat-*`), so it goes through "whoever uses it declares it once" — the same route as
+ * `--chat-progress-detail-ink`, `--chat-stream-ink`, `--chat-message-muted-ink`. These are
+ * **not merged**: equal values are a coincidence of today, and the spec states for each one what it is not linked to.
+ */
+.term {
+  --chat-terminal-ink: #a3a3a3;
+  max-height: 104px;
+  overflow-y: auto;
+  padding: 9px 11px;
+  font-family: var(--chat-font-mono);
+  font-size: var(--chat-t-cap);
+  line-height: 1.65;
+  color: var(--chat-terminal-ink);
+}
+.fold .body.stack .term{ padding: 7px 9px; }
+/*
+ * The breathing gap at the **junction** of the command block and the output block: 8px total, half
+ * taken by each — the spec hangs `--term-section-gap: 8px` on `.code` and each rule takes
+ * `calc(… / 2)` (853da24ea5 `components.css:2395 / 2433-2434`). Here it is written as two 4px
+ * literals: nothing else consumes that variable on the product side, and a variable only ever
+ * divided by itself is one more layer of indirection.
+ *
+ * ⚠️ **The outer padding doesn't move** (block top / block bottom stay at the 7px of the rule
+ * above). Before the fix both sides at the junction wrote 7px and stacked to 14px — the gap in
+ * the middle was wider than the block's own outer padding, and the two body texts were spread
+ * looser than the frame.
+ *
+ * Specificity: both are 6~7 classes, enough to beat the `.fold .body.stack .term` (0,4,0) above.
+ */
+.fold .body.stack .code > .term.cmd:has(+ .term) { padding-bottom: 4px; }
+.fold .body.stack .code > .term.cmd + .term { padding-top: 4px; }
+/* Long-string fallback: paths, tokens, base64 must be able to break, or a long link overflows the radius and gets clipped */
+.term div { white-space: pre-wrap; overflow-wrap: anywhere; }
+
+/* The command line: **same colour** as the output (see the passage above), the leading $ carries the whole distinction;
+   when it wraps, align to the command itself, not under the $ */
+.term.cmd { color: var(--chat-terminal-ink); }
+.term.cmd div { padding-inline-start: 13px; text-indent: -13px; }
+.term.cmd div::before { content: '$ '; color: var(--chat-text-faint); }
+
+.term .ok { color: var(--chat-brand-text); }
+/* The error line is the same grey tier too, no red across the row; only the leading ✗ is red (next rule) */
+.term .er { color: var(--chat-terminal-ink); }
+.term .er::first-letter { color: var(--chat-red); font-weight: 700; }
+
+/* ── Image generation (component 12) ─────────────────────────
+   Not finished yet: a row of big cells, one lands as each image arrives; all done with no
+   failure: collapses to one row + a small thumbnail strip. */
+.imgs {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 84px;
+  gap: 6px;
+  width: fit-content;
+  max-width: 100%;
+}
+.shot {
+  position: relative;
+  aspect-ratio: 3 / 4;
+  /* This image cell shares the image card's radius tier (spec `.shot { border-radius: var(--radius-lg) }`) */
+  border-radius: var(--chat-radius-lg);
+  overflow: hidden;
+  border: var(--chat-stroke) solid var(--chat-border);
+  background: var(--chat-bg-subtle);
+  padding: 0;
+}
+/* Failed cell: no red border, red is left only to the word "retry" — with a row of cells side by side,
+   the red-outlined one first reads as "this one is different", and you need a second look to see how.
+   The radius is one tier tighter than the image cell (spec `.shot.is-fail { border-radius: var(--radius) }`):
+   scanning a row, shape says half of it first, the red text is read on the second glance. */
+.shot.fail { display: grid; place-items: center; border-radius: var(--chat-radius); }
+.shot.fail .retry {
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 1px;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: var(--chat-t-cap);
+  font-weight: 600;
+  line-height: 1.3;
+  color: var(--chat-red);
+}
+.shot.fail .retry svg { width: 14px; height: 14px; }
+.shot.fail .retry:hover { color: var(--chat-text-strong); }
+
+/* The failed cell while the run is still going (OPEND-2544). Placement is identical line by line to
+   "retry" — inside one row of cells these two states swap back and forth, and any shift reads as a jump.
+   **The only difference is whether it can be acted on**: no `cursor: pointer`, no `:hover` colour
+   change, and what it renders is not a `<button>`. It is not "a button you can't press yet", it is
+   a status note; looking like a button but not clicking reads as the UI having frozen.
+   The `border`/`background`/`padding`/`font-family` rules are there to override a `<button>`'s UA
+   defaults; a `<span>` never has them, so they are not repeated here. */
+.shot.fail .failNote {
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 1px;
+  width: 100%;
+  height: 100%;
+  font-size: var(--chat-t-cap);
+  font-weight: 600;
+  line-height: 1.3;
+  color: var(--chat-red);
+}
+.shot.fail .failNote svg { width: 14px; height: 14px; }
+
+.strip { display: flex; align-items: center; gap: 5px; }
+.strip .th {
+  position: relative;
+  width: 26px;
+  height: 34px;
+  padding: 0;
+  border: var(--chat-stroke) solid var(--chat-border);
+  border-radius: 3px;
+  overflow: hidden;
+  background: none;
+  cursor: pointer;
+  transition: border-color var(--chat-dur-quick) var(--chat-ease-out);
+}
+.strip .th:hover { border-color: var(--chat-text-soft); }
+
+/* Placeholder image: a flat grey block holding the space the image should take, no UI detail — review looks at frames and layout */
+.mini { display: block; width: 100%; height: 100%; object-fit: cover; background: var(--chat-bg-muted); }
+/* The audio / video cell (OPEND-2625). **There is no frame to put** in this cell — it used to go
+   through `<img src=…mp3>` uniformly, the browser couldn't load it, and it rendered a broken-image
+   icon that read as a failed generation.
+   Now it draws a glyph: it truthfully says "there is audio / video here", without faking a thumbnail.
+   The ground reuses the image cell's `--chat-bg-subtle`, so in a row of cells it sits at the same
+   grey layer as the image tier; the glyph takes the smaller side of the mid range for the cell
+   size, so the outline is still recognisable in the 26×34 thumbnail strip. */
+.glyph { display: grid; place-items: center; background: var(--chat-bg-subtle); color: var(--chat-text-soft); }
+.glyph svg { width: 45%; height: 45%; max-width: 28px; max-height: 28px; }
+/* A cell not out yet: the 21:02 design spec replaced the "curtain" with pixel liquid (see `PixelLiquid`).
+   Why liquid beats a curtain: a curtain requires [an image already in the cell], it plays "the image
+   is appearing"; this cell has to say [not generated yet] — at that point nothing exists, there is
+   no image underneath to blur.
+   ------------------------------------------------------------
+   Keep the ground, don't paint a background: the upstream light-mode bgColor is vec4(1,1,1,0),
+   alpha 0, so wherever there is no fluid the ground shows through unchanged, hence letting
+   `--chat-bg-subtle` through here. */
+.shot.load { background: var(--chat-bg-subtle); }
+
+/* ── The body of the thinking cell (component 3-1) ────────────
+   **The same as ordinary body text outside**: natural height, grows with content, no clipping,
+   no auto-scroll, no fade.
+
+   ⚠️ This overturns the design spec (2026-09-02 offline decision by product + design). The spec's
+   `thinking-stream.css` draws a 96px fixed-height window that walks upward on its own, with a 32px
+   fade at top and bottom (the whole `--stream-h` / `--stream-fade` / `.stream-viewport` set).
+   The user's words:
+     "drop the scrolling for now, the text here just needs a streaming effect like ordinary text
+       outside, no scrolling effect, **scrolling is too slow and very hard to read**"
+   "hard to read" refers to those two fades — the window dims the first and last lines until they
+   can't be read, and those two lines are exactly the newest characters; "too slow" means it moves
+   in stepwise pauses that can't keep up with the real typing speed.
+
+   What stays is only **a grey-backed container** (the user didn't ask to remove it, it's in the screenshot).
+   The per-character reveal doesn't live at this layer — it runs the same `useCharReveal` as
+   ordinary body text, inside `ThinkingMarkdown`.
+
+   ⚠️ **Only three things were overturned — "fixed height", "slow stepwise scroll" and "fade
+   masks" — the height cap and the follow both stay.**
+   I once conflated these three into one, deleted what should have stayed, and went back and forth
+   for two rounds, so here it is written down for good:
+     height  ✗ fixed height (short content still fills a screen) ✓ `max-height` — short content not capped at all
+     scroll  ✗ slow stepwise scroll with a pause per step ("too slow") ✓ follow the bottom, but **straight to it**, normal speed
+     mask    ✗ top/bottom fade ("hard to read")                    ✓ none at all
+   The user's two lines on 2026-09-02: "but I remember the text under thinking has a max height?
+   like what thinking shows after it finishes, a max height"; "thinking should auto-follow, the
+   agent scrolls as it writes, but if the user manually scrolls up… it must not auto-follow".
+   The height cap is **not in this rule** — it reuses the existing `.body.scroll` below (both
+   states of `ThoughtsRow` pass `scroll`). The same thing ("enough to read, doesn't eat the screen")
+   shouldn't have two mechanisms, so this rule only governs the grey-backed container — don't
+   write `max-height` again on `.stream`. Following belongs to `useThinkingFollow`, not CSS. */
+/*
+ * **Both states share the same grey-backed container** (product decision 2026-09-02).
+ *
+ * ## What the spec does
+ *
+ * The spec only paints the "still thinking" state (`--stream-surface: #FAFAFA` in
+ * `thinking-stream.css`); "done thinking" is **bare text**, `.fold .body.mod-scroll` at
+ * `components.css:939` has only `max-height` and `overflow-y`, no ground at all. The reason the
+ * spec gives sits right next to it: "after expanding: one card, all rows inside… hierarchy is
+ * expressed by indent and status dots alone" — no ground precisely to avoid boxes inside boxes.
+ *
+ * ## Why product decided otherwise
+ *
+ * The user tested it on 2026-09-02: after opening `Thoughts` the same content changed shells —
+ * a ground while thinking, none once done, and the visuals snapped apart. And the spec's
+ * "avoid boxes inside boxes" premise is **that everything inside is a row**; thinking body text
+ * is not a row, it is one long continuous passage, and giving it a ground is exactly what
+ * separates it from the tool rows above and below, which fits the intent of that spec line even
+ * better. So the two states are unified and the done state gets the grey ground too.
+ *
+ * ⚠️ **This is a deliberate deviation from the spec, not a porting mistake.** The next person
+ * comparing against the spec will find an extra ground on the done state — don't "fix" it back as
+ * a bug; go back to this decision first.
+ *
+ * In implementation the done state **takes the same responsibility**, without duplicating values:
+ * ground / radius / padding are written here once, the height cap still belongs to `.body.scroll`
+ * below (both states pass `scroll`), and following still belongs to `useThinkingFollow`.
+ *
+ * ⚠️ The `.thoughts` class **must actually appear in the stylesheet**, or the CSS Module never
+ * emits it and `className={styles.thoughts}` in `ExecutionShell` is `undefined` — this class has
+ * never been on the DOM in production (the same pitfall recorded in the `.hasTodo` comment).
+ * This rule is also its first real consumer.
+ */
+.stream,
+.thoughts > .body.stack {
+  /* Padding on all sides and the vertical gap reuse the spec's `--stream-pad` / `--stream-gap` */
+  --stream-pad: 8px;
+  --stream-gap: 8px;
+  /* The spec's 16px. Product tokens currently top out at `--chat-radius-lg` (12px);
+     the 2XL alias PR #7170 added in `tokens.css` is not for this layer to change,
+     switch this to `var(--chat-radius-2xl)` once the shared token lands. */
+  --stream-radius: 16px;
+  margin-block: var(--stream-gap);
+  border-radius: var(--stream-radius);
+  /*
+   * Spec: `--stream-surface: #FAFAFA` (`thinking-stream.css:25`, 853da24ea5 and delivery spec
+   * 8015870095 identical word for word) — an **opaque** ground. Swapped for a product token so the
+   * light and dark themes flip automatically, but the right tier had to be picked: `--chat-bg-panel`
+   * → `--bg-panel` → `#fafafa`, matching the spec's value and opaque.
+   *
+   * ⚠️ This used to be `--chat-bg-fill-tertiary` (`rgba(0,0,0,0.03)`) — **semi-transparent**.
+   * The consequence of that isn't "slightly off", it is that this grey ground has no definite colour
+   * at all: it changes with whatever it sits on. In the showcase page it sits on `--bg-panel`, in
+   * the conversation on `--bg`, so the same ground isn't the same colour in two places — and the
+   * spec gives exactly one fixed value.
+   */
+  background: var(--chat-bg-panel);
+  padding: var(--stream-pad);
+}
+/*
+ * ⚠️ **Specificity, not a literal value.** This used to be `.fold.flat[open] > summary + .body.stream`
+ * — which required the window to be the **shell's own** body. After thinking sank into an entry
+ * inside the shell (§F-15), the window hangs on `.fold.thoughts`, that selector **misses
+ * entirely**, and so:
+ *   `.fold .body { padding: 0 11px 11px }`      (0,2,0) won
+ *   `.fold[open] > summary + .body { padding-top: 4px }` (0,3,0) beat that too
+ *   while `.stream { padding: … }` is only (0,1,0) and loses to both.
+ * What real Chrome measured: the padding became `4px 11px 11px`, the body's left edge landed at
+ * 4px, while this row's own icon is at 22px — the body 18px left of its own icon, aligned with
+ * nothing, and the moment thinking ended (switching to `.body.stack`) the body jumped back to 22px.
+ * Brought up to the same tier, and **no longer requiring a flat shell ancestor**.
+ */
+.fold[open] > summary + .body.stream,
+.fold.thoughts[open] > summary + .body.stack {
+  border-top: 0;
+  padding: var(--stream-pad);
+}
+/*
+ * The indent lands on the **grey-backed container**, not on the text inside it.
+ *
+ * The two `:is(.body.stack, .body.stream) > *` rules above give 29 / 33 to the body's **children**.
+ * The container already carries 8px of padding, and with the indent on the children the text sits
+ * at "container left edge + 29", then jumps back to 29 the moment thinking ends (switching to
+ * `.body.stack`) — the same sideways jump the user pointed at on 2026-08-27, back again with a
+ * different number. So the whole container moves right by the same distance and its own 8px of
+ * padding is subtracted first: the text inside therefore lands exactly on the 29 / 33 line, the
+ * same column in both states.
+ *
+ * This is the same thing as the spec's "the indent must not land on the box" exception
+ * (`.fold.mod-flat … > .fold { padding-inline: 0 }`): the container is a box, what moves is the
+ * box, not the rows inside it.
+ */
+/*
+ * The grey-backed panel is **one notch narrower** than the header's hover fill, giving up one
+ * share of inline padding on each side.
+ *
+ * ## This is the relation the spec gives
+ *
+ * In the spec the thinking stream is the shell's **own** body:
+ *   `.fold.mod-flat > summary { margin-inline: -7px; padding: 6px 7px }` (components.css:1030)
+ *   `.fold.mod-flat > .body.mod-stream { padding: var(--stream-pad) }` (thinking-stream.css, 8px, **no** margin-inline)
+ * So the header's hover fill spans `-7 … W+7` and the grey panel spans `0 … W` — **7px off on
+ * each side**, and that 7 is summary's own `padding-inline`. User, 2026-09-02:
+ * "this hover state is a bit ugly, it should be allowed to stick out a bit past the one below,
+ * only a padding's worth" — that is exactly this rim.
+ *
+ * ⚠️ The `padding: 8px 11px` in the spec's base rules (components.css:898) **does not apply
+ * here**: every row inside a flat shell is overridden by `.fold.mod-flat > .body.mod-stack >
+ * .fold > summary { padding: 5px 7px }` (1056). 11 is the number for the **framed foldable block** tier.
+ *
+ * ## Why the previous version was wrong
+ *
+ * The previous version zeroed the summary's `padding-inline-start` and made the two grounds
+ * **flush** — flushed, the hover fill and the panel become the same rectangle, which reads as the
+ * panel itself flashing rather than "this row is clickable".
+ * The version before that stuck out on the left only (left -7 / right 0), and that lopsided half
+ * is exactly the ugliness the user named.
+ * Now both sides give 7px: **symmetric**, and it is the measure the spec already carries, not a newly invented constant.
+ *
+ * ## The numbers for each layer
+ *
+ * The panel is always one notch narrower than the drawer's content box (`margin-inline: 7px`),
+ * so the drawer's content box must land on "this row's column − 7"; summary keeps only its own
+ * 7, and the two together still equal the original tier:
+ *   top level   drawer 0 (not written) + summary 7  = 7  → text at 0, hover fill -7, panel 0
+ *   in a step   drawer 22               + summary 7  = 29 → text at 22, hover fill 15, panel 22
+ * Where the text lands hasn't moved a pixel; only the two grounds' relative size changed.
+ */
+.fold .thoughts > .body { margin-inline: 7px; }
+.fold.flat .body.stack .body.stack > .fold.thoughts { padding-inline-start: 22px; }
+.fold.flat .body.stack .body.stack > .fold.thoughts > summary { padding-inline-start: 7px; }
+/* The non-flat-shell tier: 33 = 26 + 7, from the same derivation */
+.fold .body.stack .body.stack > .fold.thoughts { padding-inline-start: 26px; }
+.fold .body.stack .body.stack > .fold.thoughts > summary { padding-inline-start: 7px; }
+/*
+ * ── The fold header's typography = **the standard tool row at the same level** ──────
+ *
+ * This cell **is not in the spec**. User, 2026-09-02, verbatim: "I added this thought process
+ * myself, but I synced with the designers, this just has to be exactly the same as the standard
+ * toolrow style". So the criterion for these two rules isn't some literal value, it is "measures
+ * equal to `.tool`" — guarded by
+ * `tests/components/chat/w71-thoughts-row-matches-tool-row.test.tsx`, where every assertion is
+ * **side against side**, so if tool rows change again (they already did today: `.tool .name`
+ * 500 → 400) this goes red first instead of drifting again.
+ *
+ * What was off before (two levels × four axes, colour and family were already consistent):
+ *   top level  13px / **500**  ←→ tool row 13px / 400
+ *   drawer     **12px** / **500** ←→ tool row 13px / 400
+ *
+ * The cause was that this cell took the **fold row** family's generic rules instead of the tool
+ * row family's:
+ *   top level  `.fold.flat > .body.stack > .fold > summary` gave 13px + 500 (that is the **step**
+ *              title tier, see the PR #7170 passage above);
+ *   in drawer  that rule can't reach, leaving only `.fold > summary`'s `--chat-t-mini` (12px),
+ *              and weight inherited all the way from `ChatRoot`'s 500.
+ *
+ * The reference is `div.tool` (`.tool { font-size: var(--chat-t-body) }` + `.tool .name
+ * { font-weight: 400 }`), not the foldable command branch — that branch shares the fold header tier with steps.
+ *
+ * Where each of the two rules lands is **copied from the tool row's division of labour**, not picked at random:
+ *  · font size goes on the **row box** (summary here), so title and icon slot follow it, while
+ *    the duration `.meta`'s own `--chat-t-cap` still wins, matching the tool row's 12px duration;
+ *  · weight goes only on the **title**. On summary it would also flatten the drawer's duration to
+ *    400, while the tool row's duration is 500 (inherited from `ChatRoot`) — that would fix one axis and bend the other.
+ *
+ * Specificity (0,6,1) is **deliberate**: it must beat the top-level (0,5,1)
+ * `.fold.flat > .body.stack > .fold > summary`, and the same selector must also reach the drawer
+ * level (hence a descendant combinator after `.body.stack`, not `>`).
+ * Hung only on `.thoughts`: step titles and foldable command rows are not part of this decision,
+ * and none may be swept along.
+ */
+.fold.flat > .body.stack .fold.thoughts > summary { font-size: var(--chat-t-body); }
+.fold.flat > .body.stack .fold.thoughts > summary .name { font-weight: 400; }
+/*
+ * The text inside the box **only takes the container's `--stream-pad`**, with no second indent
+ * stacked on top.
+ * The spec, verbatim: the container has `padding: var(--stream-pad)` (8px) and the body inside the
+ * window is `… > .think { padding: 0 }` — one layer of padding, not two.
+ * The arrow in the user's 2026-09-02 side-by-side points exactly at "the blank between the grey
+ * left edge and the text".
+ *
+ * Specificity must beat the `:is(.body.stack, .body.stream) > *` above at (0,6,0), hence `.flat`;
+ * the non-flat-shell copy stays, each side counts for itself.
+ */
+.fold .body.stack .thoughts > .body > *,
+.fold.flat .body.stack .thoughts > .body > * { padding-inline-start: 0; }
+/*
+ * The body inside the stream window goes **regular weight** (spec `thinking-stream.css:81`:
+ * `… > .think { padding: 0; font-weight: 400; color: var(--stream-ink) }`).
+ *
+ * ⚠️ The selector **must not be `.think`**. That cell's body is rendered by `ThinkingMarkdown`,
+ * whose `.think` comes from another CSS Module and is a different hashed class name from the
+ * `.think` here — any rule written as `.think` lands on none of it (the rule below has been
+ * spinning idle on exactly this). So it selects "the layer inside the stream window".
+ *
+ * Specificity (0,3,0) is **deliberate**: the `.think` in `ThinkingMarkdown.module.css` is (0,1,0),
+ * and a tie would be decided by which module enters the bundle first — i.e. "right today by luck".
+ *
+ * The weight used to be right by inheriting 400; once W8 moved the panel baseline to 500, thinking
+ * body text got heavier with it — a real regression.
+ *
+ * **Written for both states** (2026-09-02): once the container is unified, the same text changing
+ * weight between "while thinking" and "done thinking" becomes a new break.
+ */
+.fold .thoughts > .body > * {
+  font-weight: 400;
+}
+/*
+ * The ink of thinking body text — the spec's `--stream-ink` (#a3a3a3, components.css:28)
+ * "reasoning in the scrolling stream is lighter than ordinary `.think`… its job is the fact that
+ *   'still thinking', not to be read word by word — the same ink as body text would pin attention
+ *   on a passage that is about to scroll away".
+ *
+ * ⚠️ **This rule has been idle until now**, for exactly the same reason as the weight rule above:
+ * the `.think` in `.stream > .think` below is record's own (`SayText`'s paragraphs use it), while
+ * what lives in the stream window is `ThinkingMarkdown`'s `.think` — two CSS Modules, two hashed
+ * class names, and not one rule lands. So thinking body text has in fact always taken
+ * `--chat-text-strong` (#202020) from `ThinkingMarkdown.module.css`.
+ * Those "bold dark subheadings" in the user's 2026-09-02 screenshot are it.
+ * It now selects "the layer inside the thinking cell's body", the same criterion as the weight.
+ *
+ * **The done state steps back too** (product decision 2026-09-02, a deviation from the spec): the
+ * spec treats the collapsed `.think` as the conclusion and keeps it dark, on the premise that the
+ * state has no container of its own and sits in the stream; in the product version both states
+ * share one grey-backed container (see `.stream, .thoughts > .body.stack` above), and an ink swap
+ * inside the same box is more jarring than a container swap.
+ */
+.fold .thoughts > .body > * {
+  color: var(--chat-stream-ink);
+}
+/*
+ * markdown subheadings no longer shout on their own.
+ *
+ * `ThinkingMarkdown.module.css` sets `.md-h` to `--chat-text-strong` + 600 — that is the
+ * **message body** tier's convention; dropped into a passage of reasoning that has stepped back
+ * as a whole, it becomes a few jarring bold black lines on the grey ground (the user's 2026-09-02
+ * screenshot). This rule only pulls it back to "follow the paragraph": colour inherited, weight
+ * half a step above body text instead of the heaviest tier.
+ *
+ * Specificity (0,3,0) over (0,2,0) is **deliberate** — a tie would be decided by which module
+ * enters the bundle first.
+ * `md-h` is a **global** class emitted by the markdown renderer, so it must be wrapped in
+ * `:global()`, or the CSS Module rewrites it to a hashed name too and the rule is idle again.
+ */
+.fold .thoughts > .body :global(.md-h) {
+  color: inherit;
+  font-weight: 500;
+}
+/*
+ * ⚠️ The rule below **is idle right now**; it is kept because it would be correct the day a
+ * paragraph record owns, like `SayText`, lands in the stream window — what actually applies is
+ * the two rules above that select "the layer inside the body".
+ */
+.stream > .think {
+  padding: 0;
+  color: var(--chat-stream-ink);
+}
+.stream > .think + .think { margin-top: 0.75em; }
+
+/* ── Height cap + a normal scrollbar (long content that is opened to read) ──
+ * User, 2026-08-27: "when thought is expanded there should be a max height, it can scroll" —
+ * the attached screenshot was the **finished-thinking** tier opened up, with a dozen passages of
+ * reasoning spilling off the screen.
+ *
+ * The value isn't mine. Delivery spec, line 1252:
+ *   `.fold .body.mod-scroll { max-height: 96px; overflow-y: auto; }`
+ * The comment on line 3674 pins that number down: "96px ≈ 5 lines, the same height `.mod-scroll`
+ * uses inside foldable blocks; every 'enough to read but doesn't eat the screen' window on this
+ * screen is this tier".
+ *
+ * **The in-progress tier goes through this now too** (user, 2026-09-02: "like that thinking
+ * display after it finishes, with a max height"). Both states of `ThoughtsRow` pass `scroll`, so
+ * this rule governs both `.body.stack.scroll` (done thinking) and `.body.stream.scroll` (still thinking).
+ *
+ * `.stream` is left with only the grey-backed container responsibility; it doesn't overlap this and
+ * shouldn't be merged with it:
+ *   `.stream` owns ground / radius / padding;
+ *   this owns the **height cap** — `max-height` rather than `height`, so **short content isn't
+ *   capped at all and gets no scrollbar**, and only long content is cut off, with no mask — a mask
+ *   would wipe out the top and bottom of the line the user is reading.
+ *
+ * ⚠️ There once was a window on `.stream` with `height: 96px` + fade + rAF stepwise easing, and
+ * that whole set is overturned (user: "scrolling is too slow and very hard to read"). What was
+ * overturned is **fixed height + slow stepwise scroll + mask** — the height cap stays (this rule),
+ * and so does the follow-the-bottom (in `useThinkingFollow`, straight to the bottom in one go).
+ */
+.fold .body.scroll {
+  max-height: 96px;
+  overflow-y: auto;
+  /*
+   * ── The scrollbar gets **its own lane**, never drawn over the text (OPEND-2643) ──
+   *
+   * This used to be `padding-inline-end: 4px`, with a comment saying "text that overflows hugs
+   * the scrollbar, leave it a little breathing room". That sentence **never took effect**: this
+   * rule is (0,3,0), while the two grey-backed container rules
+   *   `.fold[open] > summary + .body.stream`          (0,4,0)
+   *   `.fold.thoughts[open] > summary + .body.stack`  (0,5,0)
+   * write `padding: var(--stream-pad)` — **the shorthand that sets all four sides**. Logical
+   * longhands and physical shorthand resolve against the same cascade, so the right side always
+   * kept the container's 8px and the 4px line was dead code.
+   * (The measured guard is the second case in
+   *  `tests/components/chat/opend-2643-thinking-scrollbar-gutter.test.tsx` — it pins "who wins", not a literal value.)
+   *
+   * And 8px isn't enough either, because it was never a matter of "yielding": on macOS Chromium
+   * defaults to **overlay scrollbars**, which take no layout and paint directly on the right edge
+   * of the padding box, getting wider on hover/drag — the body's right edge is inside those 8px,
+   * so the scrollbar covered the rightmost characters (the ticket screenshot).
+   *
+   * It takes both of these together:
+   *
+   *  1. `::-webkit-scrollbar` with an **explicit width**. Once Blink sees this box has a custom
+   *     scrollbar, it stops giving it the overlay set, and the scrollbar becomes a classic
+   *     layout-occupying one — the width it takes is subtracted from the content box, so text
+   *     **cannot** be covered again. That is the root fix.
+   *  2. `scrollbar-gutter: stable` keeps the lane **reserved at all times**. Thinking is appended
+   *     as it goes, and the scrollbar appears the moment content passes 96px; without this, the
+   *     body jumps sideways at that instant (the "content keeps appending" half of the ticket).
+   *     By the way: the gutter isn't padding, so those two shorthands above can't take it.
+   *
+   * ⚠️ **Don't** add `scrollbar-width` / `scrollbar-color` to this box. Since Chromium 121, once
+   * either standard property gets a value other than `auto`, the whole `::-webkit-scrollbar` set
+   * stops applying — step 1 is silently undone, the box falls back to the system overlay
+   * scrollbar, and the defect comes back as it was.
+   * Leaving them out is safe on both engines: Gecko has no overlay scrollbars, and its default bar
+   * occupies layout to begin with.
+   */
+  scrollbar-gutter: stable;
+}
+.fold .body.scroll::-webkit-scrollbar {
+  width: 8px;
+}
+.fold .body.scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+.fold .body.scroll::-webkit-scrollbar-thumb {
+  /* Lane 8px, the thumb narrowed to 4px centred by a 2px transparent border — which leaves a gap
+     between it and the text, instead of "hugging". The same writing as
+     `.onboarding-view__select-options` in `styles/home/entry-layout.css`. */
+  border: 2px solid transparent;
+  border-radius: var(--chat-radius-pill);
+  background: color-mix(in srgb, var(--chat-text-muted) 30%, transparent);
+  background-clip: padding-box;
+}

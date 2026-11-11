@@ -1,0 +1,83 @@
+/*
+ * [INPUT]: global neutral colours, Geist fonts and base motion tokens.
+ * [OUTPUT]: the neutral --chat-* theme shared by execution records and chat states.
+ * [POS]: chat theme seam (remixclip edition, keeps open-design's compat slots).
+ *
+ * Rules (same as OD components/chat/AGENTS.md §2):
+ *   · component CSS Modules only write var(--chat-*), never app tokens directly
+ *   · use the OD design spec's literal for tiers remixclip lacks, don't invent
+ *   · remixclip is light-only for now, when dark lands only this file changes
+ */
+:root {
+  /* ── Text ── */
+  --chat-text: var(--color-ink);
+  --chat-text-strong: var(--color-ink);
+  --chat-text-muted: var(--color-muted);
+  --chat-text-soft: var(--color-muted);
+  --chat-text-faint: var(--color-muted);
+
+  /* ── Base and surfaces ── */
+  --chat-bg: var(--color-background);
+  --chat-bg-panel: var(--color-panel);
+  --chat-bg-subtle: var(--color-panel);
+  --chat-bg-muted: var(--color-panel);
+  --chat-bg-fill-secondary: color-mix(in srgb, var(--color-ink) 5%, transparent);
+  --chat-bg-fill-tertiary: color-mix(in srgb, var(--color-ink) 8%, transparent);
+
+  /* ── Strokes ── */
+  --chat-border: var(--color-line);
+  --chat-border-strong: var(--color-line);
+  --chat-border-soft: var(--color-line);
+  --chat-stroke: 1px;
+
+  /* ── Semantic states: keep compat names, text, icons and fills all neutral grey ── */
+  --chat-red: var(--color-foreground);
+  --chat-red-bg: var(--color-secondary);
+  --chat-red-border: var(--color-border);
+  --chat-blue: var(--color-foreground);
+  --chat-green: var(--color-foreground);
+  --chat-brand-text: var(--color-foreground);
+  --chat-brand-weak: var(--color-secondary);
+
+  /* ── Standalone-row ink (design spec literal #A3A3A3, doesn't flip with theme) ── */
+  --chat-tool-ink: #a3a3a3;
+  --chat-progress-detail-ink: var(--color-ink);
+  --chat-stream-ink: #a3a3a3;
+  --chat-terminal-ink: var(--color-ink);
+
+  /* ── Fonts and type scale ── */
+  --chat-font-sans: var(--font-geist-sans), 'PingFang SC', system-ui, sans-serif;
+  --chat-font-mono: var(--font-geist-mono), 'SF Mono', ui-monospace, monospace;
+  --chat-t-cap: 12px;
+  --chat-t-mini: 12px;
+  --chat-t-body: 13px;
+  --chat-t-lead: 14px;
+  --chat-t-head: 16px;
+  --chat-t-disp: 20px;
+  --chat-lh-tight: 1.35;
+  --chat-lh-body: 1.7;
+  --chat-lh-row: 1.5;
+
+  /* ── Shape ── */
+  --chat-radius-sm: 6px;
+  --chat-radius: var(--radius);
+  --chat-radius-lg: 12px;
+  --chat-radius-2xl: 16px;
+  --chat-radius-pill: 999px;
+  --chat-shadow-sm: var(--shadow-sm);
+  --chat-shadow-md: var(--shadow-md);
+  --chat-shadow-lg: var(--shadow-lg);
+
+  /* ── Motion ── */
+  --chat-ease-out: cubic-bezier(0.175, 0.885, 0.32, 1.1);
+  --chat-dur-quick: 140ms;
+  --chat-dur-enter: 220ms;
+  --chat-dur-exit: 160ms;
+  /* Neutral grey sweep (thinking / in progress / reconnecting share one animation) */
+  --chat-dia-1: var(--color-gray-700);
+  --chat-dia-2: var(--color-gray-500);
+  --chat-dia-3: var(--color-gray-300);
+  --chat-dia-4: var(--color-gray-500);
+  --chat-dia-5: var(--color-gray-700);
+  --chat-anim-ink: #353535;
+}

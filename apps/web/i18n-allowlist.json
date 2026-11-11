@@ -1,0 +1,10 @@
+{
+  "$comment": "Allowlist for bare Chinese. Every entry must give a reason: only content that is inherently Chinese and must not be translated (user-data samples, language names, third-party content) is allowed. UI copy always goes into apps/web/src/i18n/locales/*, never here.",
+  "allow": [
+    {
+      "file": "apps/web/src/i18n/types.ts",
+      "text": "'zh-CN': '简体中文'",
+      "reason": "In the language switcher every language always shows itself in its native name (LOCALE_LABEL); that is the language name itself and is never translated."
+    }
+  ]
+}

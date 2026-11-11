@@ -1,0 +1,48 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="title description">
+  <title id="title">RemixClip</title>
+  <desc id="description">两个半帧从对角两侧错位合拢，白色半帧中的播放三角随后弹出。</desc>
+  <style>
+    @media (prefers-reduced-motion: no-preference) {
+      .rc-part { opacity: 0; }
+      .rc-upper { animation: rc-upper-in 620ms cubic-bezier(.2, .9, .2, 1) both; }
+      .rc-lower { animation: rc-lower-in 620ms cubic-bezier(.2, .9, .2, 1) both; }
+      .rc-play {
+        animation: rc-play-in 420ms cubic-bezier(.2, .8, .2, 1) 280ms both;
+        transform-origin: 27.5px 27px;
+      }
+    }
+    @keyframes rc-upper-in {
+      from { opacity: 0; transform: translate(-7px, -7px); }
+      to { opacity: 1; transform: translate(-1px, -1px); }
+    }
+    @keyframes rc-lower-in {
+      from { opacity: 0; transform: translate(7px, 7px); }
+      to { opacity: 1; transform: translate(1px, 1px); }
+    }
+    @keyframes rc-play-in {
+      from { opacity: 0; transform: scale(.55); }
+      to { opacity: 1; transform: scale(1); }
+    }
+  </style>
+  <defs>
+    <linearGradient id="rc-bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#22222A"/>
+      <stop offset="1" stop-color="#0F0F13"/>
+    </linearGradient>
+    <linearGradient id="rc-accent" x1="0" y1="1" x2="1" y2="0">
+      <stop offset="0" stop-color="#FF4D6D"/>
+      <stop offset="1" stop-color="#FF8A3D"/>
+    </linearGradient>
+    <clipPath id="rc-upper"><polygon points="0,0 63,0 0,63"/></clipPath>
+    <clipPath id="rc-lower"><polygon points="64,1 64,64 1,64"/></clipPath>
+  </defs>
+  <rect width="64" height="64" rx="15.5" fill="url(#rc-bg)"/>
+  <rect x="0.75" y="0.75" width="62.5" height="62.5" rx="14.9" fill="none" stroke="#FFFFFF" stroke-opacity="0.08" stroke-width="1.5"/>
+  <g class="rc-part rc-upper" clip-path="url(#rc-upper)" transform="translate(-1 -1)">
+    <rect x="13" y="13" width="38" height="38" rx="9" fill="#F7F7F8"/>
+    <path class="rc-play" d="M23.5 21.6 L32.6 27 L23.5 32.4 Z" fill="#141418" stroke="#141418" stroke-width="1.6" stroke-linejoin="round"/>
+  </g>
+  <g class="rc-part rc-lower" clip-path="url(#rc-lower)" transform="translate(1 1)">
+    <rect x="13" y="13" width="38" height="38" rx="9" fill="url(#rc-accent)"/>
+  </g>
+</svg>

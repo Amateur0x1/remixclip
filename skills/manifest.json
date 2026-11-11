@@ -1,0 +1,33 @@
+{
+  "$comment": "Skill catalog injected into every agent turn. Keep `summary` short (one line): it is prompt text, not documentation. Resolved as skills/<id>/SKILL.md at runtime.",
+  "skills": [
+    {
+      "id": "hyperframes",
+      "summary": "动效视频总入口：把需求拆成镜头序列、挑蓝图、决定读哪层知识；不确定先读它"
+    },
+    {
+      "id": "hyperframes-core",
+      "summary": "合成契约：data-* 时间属性、clip、轨道、子合成、确定性渲染；写 HTML 前必读"
+    },
+    {
+      "id": "hyperframes-animation",
+      "summary": "动效知识库：原子动效规则、多段场景蓝图、转场、缓动与时间轴写法；复刻镜头动效主力"
+    },
+    {
+      "id": "hyperframes-creative",
+      "summary": "非动效的创意方向：配色、字体、排版、旁白节奏与品牌调性判断"
+    },
+    {
+      "id": "hyperframes-keyframes",
+      "summary": "关键帧实现细节：GSAP 时间轴、CSS keyframes、SVG 描边与形变、路径和遮罩"
+    },
+    {
+      "id": "embedded-captions",
+      "summary": "字幕与花字：逐词时间轴、风格清单、抠像把字幕叠进画面"
+    },
+    {
+      "id": "motion-graphics",
+      "summary": "短促动效设计片：动态字体、数字滚动、图表与数据可视化动效"
+    }
+  ]
+}

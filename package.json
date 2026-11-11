@@ -1,0 +1,53 @@
+{
+  "name": "remixclip",
+  "version": "0.1.0",
+  "license": "Apache-2.0",
+  "private": true,
+  "packageManager": "pnpm@10.33.2",
+  "type": "module",
+  "description": "RemixClip — 本地优先的产品工作台",
+  "scripts": {
+    "tools-dev": "pnpm exec tools-dev",
+    "typecheck": "pnpm -r --workspace-concurrency=4 --if-present run typecheck",
+    "i18n:check": "tsx ./scripts/i18n-check.ts",
+    "visual": "pnpm --dir e2e run visual",
+    "visual:record": "pnpm --dir e2e run visual:record",
+    "extension:install": "pnpm --dir extensions/remixclip-companion install --frozen-lockfile --ignore-workspace",
+    "extension:dev": "pnpm --dir extensions/remixclip-companion run dev",
+    "extension:build": "pnpm --dir extensions/remixclip-companion run build",
+    "tools-pack": "pnpm exec tools-pack",
+    "package": "pnpm exec tools-pack host build --to all",
+    "package:mac": "pnpm exec tools-pack mac build --to all",
+    "package:win": "pnpm exec tools-pack win build --to all",
+    "package:linux": "pnpm exec tools-pack linux build --to all",
+    "package:dir": "pnpm exec tools-pack host build --to dir",
+    "package:verify": "pnpm exec tools-pack host verify"
+  },
+  "devDependencies": {
+    "@remixclip/contracts": "workspace:*",
+    "@remixclip/daemon": "workspace:*",
+    "@remixclip/tools-dev": "workspace:*",
+    "@remixclip/tools-pack": "workspace:*",
+    "@types/node": "20.19.39",
+    "electron-builder": "26.18.0",
+    "tsx": "4.22.3",
+    "typescript": "5.9.3"
+  },
+  "engines": {
+    "node": "~24",
+    "pnpm": ">=10.33.2 <11"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "better-sqlite3",
+      "electron",
+      "esbuild",
+      "@ffmpeg-installer/darwin-arm64",
+      "@ffmpeg-installer/darwin-x64",
+      "@ffmpeg-installer/linux-x64",
+      "@ffprobe-installer/darwin-arm64",
+      "@ffprobe-installer/darwin-x64",
+      "@ffprobe-installer/linux-x64"
+    ]
+  }
+}
