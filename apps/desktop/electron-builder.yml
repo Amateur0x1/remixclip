@@ -34,6 +34,10 @@ extraResources:
     to: remixclip.png
 
 asar: true
+# Without an Apple identity electron-builder skips codesign, which leaves Electron's linker-only
+# signature sealing different contents: macOS then calls the app "damaged" instead of unsigned.
+# The hook re-signs ad-hoc so a certificate-less build still opens after right-click → Open.
+afterPack: scripts/after-pack.cjs
 # The desktop package has no production dependencies; native modules live inside the bundled
 # daemon, whose Node ABI is pinned by the Node runtime we ship in extraResources.
 npmRebuild: false
