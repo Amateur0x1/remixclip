@@ -7,12 +7,17 @@
  * 200 + ConnectionTestResponse; read ok/kind/detail for the outcome.
  *
  * Categories (aligned with OD classifyVersionProbeFailure semantics):
- * - binary  : executable not found
- * - timeout : process killed on timeout (usually network unreachable / proxy issues)
- * - auth    : non-zero exit code and stderr hits auth keywords
- * - network : stderr hits network keywords
- * - ok      : process exited successfully and actual assistant text was parsed
- *             (an init frame does not count as a successful connection)
+ * - binary     : executable not found
+ * - timeout    : process killed on timeout (usually network unreachable / proxy issues)
+ * - auth       : not logged in / dead credentials
+ * - quota      : 额度 / 配额 / 余额不足 — the one failure a retry can never fix
+ * - rate_limit : throttled, retry later
+ * - network    : proxy / DNS / TLS failures
+ * - ok         : process exited successfully and actual assistant text was parsed
+ *                (an init frame does not count as a successful connection)
+ *
+ * The classification itself lives in runtimes/errors.ts so a run and this test always agree on
+ * what "out of quota" looks like.
  */
 
 import type { Express, Request, Response } from 'express';
@@ -25,24 +30,19 @@ import type { ConnectionTestResponse } from '@remixclip/contracts';
 import { getAgentDef } from '../runtimes/registry.js';
 import { agentAuthStatus, agentCapabilities } from '../runtimes/detection.js';
 import { resolveAgentExecutable } from '../runtimes/executables.js';
+import { classifyAgentFailure, classifyAgentFailureKind } from '../runtimes/errors.js';
+import { recordQuotaExhausted, recordQuotaOk } from '../runtimes/quota-state.js';
 import { readAppConfig, agentCliEnvForAgent } from '../app-config.js';
 
 const TEST_TIMEOUT_MS = 45_000;
 const TEST_PROMPT = 'Reply with exactly: ok';
-const AUTH_HINTS = [
-  'unauthorized', 'authentication', 'api key', 'apikey', 'auth', 'login',
-  'credit', 'billing', 'quota', 'permission', 'token', '401', '403',
-];
-const NETWORK_HINTS = [
-  'econnrefused', 'enotfound', 'etimedout', 'econnreset', 'fetch failed',
-  'network', 'proxy', 'dns', 'certificate',
-];
 
-function classifyStderr(stderr: string): 'auth' | 'network' | null {
-  const text = stderr.toLowerCase();
-  if (NETWORK_HINTS.some((k) => text.includes(k))) return 'network';
-  if (AUTH_HINTS.some((k) => text.includes(k))) return 'auth';
-  return null;
+function classifyStderr(
+  stderr: string,
+): 'auth' | 'quota' | 'rate_limit' | 'network' | null {
+  const kind = classifyAgentFailureKind(stderr);
+  if (kind === 'unknown' || kind === 'agent') return null;
+  return kind;
 }
 
 export function registerConnectionTestRoutes(app: Express): void {
@@ -197,16 +197,41 @@ export function registerConnectionTestRoutes(app: Express): void {
 
       child.on('close', (code) => {
         if (code === 0 && assistantOutput && !errorDetail) {
+          // A working turn is the only proof that the quota is usable again.
+          recordQuotaOk(def.id);
           finish({ ok: true, kind: 'ok', latencyMs: latency(), model });
           return;
         }
-        const kind = classifyStderr(`${stderrTail} ${errorDetail}`) ?? 'unknown';
+        const text = `${stderrTail} ${errorDetail}`.trim();
+        const kind = classifyStderr(text) ?? 'unknown';
+        // Quota / throttling is remembered, so settings can explain the next failure without
+        // waiting for it to happen again.
+        if (kind === 'quota' || kind === 'rate_limit') {
+          const failure = classifyAgentFailure({
+            text,
+            exitCode: code,
+            agentName: def.name,
+            bin: def.bin,
+          });
+          recordQuotaExhausted(def.id, {
+            detail: failure.message,
+            resetAt: failure.retryAfterAt ?? null,
+          });
+          finish({
+            ok: false,
+            kind,
+            latencyMs: latency(),
+            model,
+            detail: failure.message,
+          });
+          return;
+        }
         finish({
           ok: false,
           kind,
           latencyMs: latency(),
           model,
-          detail: (errorDetail || stderrTail.trim()).split('\n').slice(-3).join('\n') || `进程退出码 ${code}，未收到有效回复`,
+          detail: text.split('\n').slice(-3).join('\n') || `进程退出码 ${code}，未收到有效回复`,
         });
       });
 

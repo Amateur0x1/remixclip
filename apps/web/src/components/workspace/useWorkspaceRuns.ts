@@ -60,11 +60,13 @@ export function useWorkspaceRuns(currentConvId: string | null, onSettled: () => 
     finalizedRef.current.add(runId);
     const final = liveTurnsRef.current.get(runId) ?? EMPTY_TURN;
     const content = final.items.filter((item) => item.kind === 'text').map((item) => item.text).join('').trim();
-    const parts = [content, final.error ? t('chat.errorPrefix', { message: final.error }) : '', final.stopped ? t('chat.stopped') : ''].filter(Boolean);
+    // The failure is NOT appended to the content anymore: it is structural, and the error card
+    // renders it (kind + reset time) in the reader's own language.
+    const parts = [content, final.stopped ? t('chat.stopped') : ''].filter(Boolean);
     if (viewConvRef.current === conversationId) {
-      if (parts.length || final.toolCalls.length || artifacts?.length) {
+      if (parts.length || final.toolCalls.length || artifacts?.length || final.error) {
         const message: UiMessage = {
-          id: `assistant-${runId}`, conversationId, role: 'assistant', content: parts.join('\n\n') || t('message.noTextOutput'),
+          id: `assistant-${runId}`, conversationId, role: 'assistant', content: parts.join('\n\n'),
           createdAt: Date.now(), runId, toolCalls: final.toolCalls, turnItems: final.items.length ? final.items : undefined,
           stopped: final.stopped || undefined, error: final.error, elapsedMs: Date.now() - startedAt, artifacts,
         };
@@ -135,7 +137,16 @@ export function useWorkspaceRuns(currentConvId: string | null, onSettled: () => 
         // Transport exhaustion is NOT a daemon terminal frame. Keep the background run and manual retry alive.
         if (exhausted) return;
         terminal = true;
-        updateRunTurn(runId, (value) => ({ ...value, error }));
+        updateRunTurn(runId, (value) => ({
+          ...value,
+          error: {
+            message: error.message,
+            kind: error.kind,
+            detail: error.detail,
+            resetAt: error.retryAfterAt ?? null,
+            exitCode: error.exitCode ?? null,
+          },
+        }));
         dispatchReconnect({ kind: 'settled', runId, status: 'failed' });
       },
       onEnd: (payload) => { terminal = true; artifacts = payload.artifacts; dispatchReconnect({ kind: 'settled', runId, status: payload.status }); },
@@ -216,7 +227,10 @@ export function useWorkspaceRuns(currentConvId: string | null, onSettled: () => 
       dispatchReconnect({ kind: 'dropped', runId: active.runId });
       finalizeRun(active.runId, conversationId, active.startedAt);
     } catch (error) {
-      updateRunTurn(active.runId, (value) => ({ ...value, error: error instanceof Error ? error.message : t('chat.stopFailed') }));
+      updateRunTurn(active.runId, (value) => ({
+        ...value,
+        error: { message: error instanceof Error ? error.message : t('chat.stopFailed') },
+      }));
     }
   }, [dispatchReconnect, finalizeRun, updateRunTurn]);
 

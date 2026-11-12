@@ -829,7 +829,10 @@ export function appendMessage(
     input.artifacts?.length ? JSON.stringify(input.artifacts) : null,
     input.attachments?.length ? JSON.stringify(input.attachments) : null,
   );
-  if (input.process && (input.process.toolCalls.length > 0 || input.process.items.length > 0)) {
+  if (
+    input.process &&
+    (input.process.toolCalls.length > 0 || input.process.items.length > 0 || input.process.error)
+  ) {
     db.prepare(
       `INSERT OR REPLACE INTO message_process (message_id, payload) VALUES (?, ?)`,
     ).run(id, JSON.stringify(input.process));

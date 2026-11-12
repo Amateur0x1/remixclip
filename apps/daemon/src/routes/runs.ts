@@ -24,7 +24,12 @@
 import { mkdirSync } from 'node:fs';
 import type { Express, Request, Response } from 'express';
 import type Database from 'better-sqlite3';
-import type { ChatAttachment, ChatRunCreateRequest, ChatRunCreateResponse } from '@remixclip/contracts';
+import type {
+  ChatAttachment,
+  ChatRunCreateRequest,
+  ChatRunCreateResponse,
+  ChatTurnProcess,
+} from '@remixclip/contracts';
 import {
   PROMPT_LOCALE_EXEMPT_TERMS_SENTENCE,
   normalizePromptLocale,
@@ -359,7 +364,13 @@ function buildOutputLayoutPrompt(hasSources: boolean): string {
     '成片契约（不要违反，成片库据此收录）：\n' +
     '- 最终成片只能有一支，路径必须是 `output/final.mp4`，重渲染直接覆盖它；\n' +
     '- `output/` 根目录下不要再放第二支视频（`.mp4` / `.mov` / `.webm`），试渲染放 `studio/`；\n' +
-    '- 不要用 `videos/`、`src/` 装代码文件；成片完成后在回复里给出 `output/final.mp4`。';
+    '- 不要用 `videos/`、`src/` 装代码文件；成片完成后在回复里给出 `output/final.mp4`。\n\n' +
+    '复刻方式（硬约束）：\n' +
+    '- 复刻的目标是「结构 + 动效逻辑」的可编辑还原（HTML/CSS/JS、HyperFrames 或确定性渲染器），' +
+    '不是把参考片逐帧描摹成图片。\n' +
+    '- 禁止把参考视频拆成一帧一张 SVG / PNG、再把它们按帧号拼回视频：这等价于截图连播，' +
+    '既不可编辑，也没有复刻价值。\n' +
+    '- 逐帧取图只允许用于比对与校验（关键帧对齐、像素 diff），不是产出路径。';
 }
 
 /**
@@ -402,13 +413,22 @@ function persistRunOnTerminal(
 
     // 1) Write the turn first: the cursor stored with the handle must be THIS run's assistant
     //    message id, otherwise the handle would look stale on the very next turn.
+    //    A failed turn with no output is still worth writing: otherwise a quota exhaustion
+    //    disappears the moment the user switches conversations, leaving no trace of why the
+    //    turn produced nothing.
     let assistantId: string | null = null;
-    if (run.assistantText.trim() || run.artifacts?.length) {
+    const failure = run.runError;
+    if (run.assistantText.trim() || run.artifacts?.length || failure) {
       try {
-        const process = turnProcessFromEvents(run.events);
+        const process: ChatTurnProcess | undefined = turnProcessFromEvents(run.events)
+          ?? (failure ? { items: [], toolCalls: [] } : undefined);
         // Duration cannot be rebuilt from the event stream, so it rides on the process payload:
         // the collapsed "Worked for …" header must show the same number after a reload.
-        if (process) process.elapsedMs = run.terminalAt - run.createdAt;
+        if (process) {
+          process.elapsedMs = run.terminalAt - run.createdAt;
+          // Structured, not prose: the reloaded history renders the same error card.
+          if (failure) process.error = failure;
+        }
         assistantId = appendMessage(db, {
           conversationId,
           role: 'assistant',

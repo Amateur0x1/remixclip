@@ -178,6 +178,15 @@ export interface ChatTurnProcess {
   toolCalls: ChatToolCall[];
   /** Wall-clock duration of the run: the "Worked for …" row must survive a reload. */
   elapsedMs?: number;
+  /**
+   * The turn's failure, if it failed.
+   *
+   * Stored beside the message rather than in `content`: a quota exhaustion is not assistant prose,
+   * and keeping it structured lets the reloaded history show the same error card (kind + reset
+   * time) the live turn showed — instead of an extra paragraph of Chinese inside the bubble, or
+   * nothing at all.
+   */
+  error?: ChatRunError;
 }
 
 export interface ChatMessage {
@@ -247,6 +256,30 @@ export interface AgentAuthStatus {
   detail?: string;
 }
 
+/**
+ * Last known quota/limit reading for one agent.
+ *
+ * The agents do not expose a uniform "show me my quota" command, but every one of them says so
+ * when it runs out: the daemon classifies that failure and keeps the reading here, so the next
+ * look at settings can answer "why did my last run die" without digging through any logs.
+ */
+export interface AgentQuotaStatus {
+  status: 'ok' | 'exhausted' | 'unknown';
+  /** One line for the settings row, e.g. "额度已用尽，预计 12:30 恢复". */
+  detail?: string;
+  /** When the exhausted quota is expected to reset (epoch ms), if the agent told us. */
+  resetAt?: number | null;
+  /** When this reading was observed (epoch ms). */
+  checkedAt?: number;
+  /** The most recent usage frame the agent reported (tokens / cost of one turn). */
+  lastUsage?: {
+    inputTokens?: number;
+    outputTokens?: number;
+    costUsd?: number;
+    at?: number;
+  };
+}
+
 export interface AgentInfo {
   id: string;
   name: string;
@@ -270,13 +303,24 @@ export interface AgentInfo {
   capabilities?: AgentCapability[];
   /** Auth probe result (absent when the def does not declare authProbe). */
   auth?: AgentAuthStatus;
+  /** Last known quota reading (from a real run, not a paid probe). */
+  quota?: AgentQuotaStatus;
 }
 
 /** Response of POST /api/test/connection: the daemon always answers 200,
  *  read ok/kind/detail for the outcome (trimmed version of open-design ConnectionTestResponse). */
 export interface ConnectionTestResponse {
   ok: boolean;
-  kind: 'ok' | 'binary' | 'auth' | 'network' | 'model' | 'timeout' | 'unknown';
+  kind:
+    | 'ok'
+    | 'binary'
+    | 'auth'
+    | 'quota'
+    | 'rate_limit'
+    | 'network'
+    | 'model'
+    | 'timeout'
+    | 'unknown';
   latencyMs: number;
   model?: string;
   detail?: string;
@@ -290,6 +334,41 @@ export type ChatRunStatus =
   | 'completed'
   | 'failed'
   | 'cancelled';
+
+/**
+ * Why a run failed.
+ *
+ * The classification is the daemon's job: only it sees the agent's stderr / error frames, and an
+ * agent CLI that exits 1 without telling anyone why must still become something the user can act
+ * on. The web layer renders one card per kind instead of a bare "exit code 1".
+ *
+ *   quota     额度 / 配额 / 余额不足 —— 充值或等额度重置
+ *   rate_limit 触发限流 —— 稍后重试
+ *   auth      未登录 / 凭证失效 —— 在终端登录后重试
+ *   network   网络 / 代理不可达
+ *   agent     agent 自身报错（工具失败、模型拒绝等）
+ *   unknown   实在看不出原因，保留原始输出供用户自查
+ */
+export type ChatRunErrorKind =
+  | 'quota'
+  | 'rate_limit'
+  | 'auth'
+  | 'network'
+  | 'agent'
+  | 'unknown';
+
+/** Structured run failure carried by the SSE error frame and the run status endpoint. */
+export interface ChatRunError {
+  kind: ChatRunErrorKind;
+  /** One-line summary; never just an exit code. */
+  message: string;
+  /** Raw agent output (stderr / error frame), shown in the expandable detail. */
+  detail?: string;
+  /** Process exit code — informational only. */
+  exitCode?: number | null;
+  /** Expected quota reset / retry-after time (epoch ms), when the agent said it. */
+  retryAfterAt?: number | null;
+}
 
 export interface ChatRunCreateRequest {
   /** Runtime override for this turn; defaults to the global `app-config.agentId`. */
@@ -347,6 +426,8 @@ export interface ChatRunStatusResponse {
   terminalAt?: number;
   exitCode?: number | null;
   error?: string;
+  /** Structured failure (kind + detail + reset time); absent on successful runs. */
+  runError?: ChatRunError;
   /** Artifact list derived from the working-directory diff after the run ends. */
   artifacts?: RunArtifact[];
   /**
@@ -406,8 +487,17 @@ export type DaemonAgentPayload =
   | { type: 'raw'; line: string };
 
 export interface SseErrorPayload {
+  /** Stable machine code: `quota_exceeded` / `rate_limited` / `auth_required` / `agent_error`. */
   code: string;
   message: string;
+  /** Classification of the failure; absent only for transport-level errors. */
+  kind?: ChatRunErrorKind;
+  /** Raw agent output for the expandable detail. */
+  detail?: string;
+  /** Quota reset / retry-after time (epoch ms), when the agent said it. */
+  retryAfterAt?: number | null;
+  /** Process exit code — informational only. */
+  exitCode?: number | null;
 }
 
 export interface ChatSseEndPayload {

@@ -38,6 +38,7 @@ import { useI18n } from '@/i18n';
 import { cn } from '@/lib/utils';
 import { MarkdownContent } from './MarkdownContent';
 import { ArtifactPreviewDialog } from './ArtifactPreviewDialog';
+import { RunErrorNotice } from './RunErrorNotice';
 import {
   KIND_ICON,
   artifactIcon,
@@ -88,7 +89,7 @@ export function MessageView({ msg }: { msg: UiMessage }) {
           elapsedMs={msg.elapsedMs}
           processExtra={<ArtifactList msg={msg} />}
         />
-        {msg.error && <div role="alert" className={styles.execError}>{msg.error}</div>}
+        {msg.error && <RunErrorNotice error={msg.error} />}
         <div className={cn(styles.messageTime, 'flex items-center gap-2')}>
           {msg.stopped && <span className={styles.shellStopped}>{t('message.stoppedPrefix')}</span>}
           <span>{formatTime(msg.createdAt)}</span>
@@ -177,9 +178,12 @@ export function MessageView({ msg }: { msg: UiMessage }) {
     <>
       {msg.toolCalls && <ToolTree calls={msg.toolCalls} />}
       <div className="group/msg mb-6 w-full max-w-[820px]">
-        <div className="text-[14px] leading-7 text-foreground [overflow-wrap:break-word]">
-          <MarkdownContent content={msg.content} />
-        </div>
+        {msg.content.trim() && (
+          <div className="text-[14px] leading-7 text-foreground [overflow-wrap:break-word]">
+            <MarkdownContent content={msg.content} />
+          </div>
+        )}
+        {msg.error && <RunErrorNotice error={msg.error} />}
         <div className={cn(styles.messageTime, 'flex items-center gap-2')}>
           <span>{formatTime(msg.createdAt)}</span>
           {copyButton}

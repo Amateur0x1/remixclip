@@ -12,6 +12,7 @@ import { rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import type {
+  ChatRunError,
   ChatRunStatus,
   ChatRunStatusResponse,
   DaemonAgentPayload,
@@ -19,6 +20,8 @@ import type {
   RemixclipChatSseEvent,
 } from '@remixclip/contracts';
 import { resolveAgentExecutable } from './executables.js';
+import { classifyAgentFailure, errorCodeOf } from './errors.js';
+import { recordQuotaExhausted, recordQuotaOk, recordUsage } from './quota-state.js';
 import { agentCapabilities } from './detection.js';
 import {
   diffWorkspaceSnapshots,
@@ -71,6 +74,8 @@ export interface RunRecord {
   /** The handle this run asked to resume (null = brand-new session), so a terminal failure can be
    *  attributed to the resume rather than to the task. */
   resumeSessionId?: string | null;
+  /** Structured classification of the failure (kind / detail / expected reset time). */
+  runError?: ChatRunError;
 }
 
 export interface CreateRunOptions {
@@ -113,6 +118,7 @@ export class RunManager {
       terminalAt: run.terminalAt,
       exitCode: run.exitCode,
       error: run.error,
+      ...(run.runError ? { runError: run.runError } : {}),
       artifacts: run.artifacts,
       sessionId: run.durableSessionId ?? null,
     };
@@ -198,16 +204,37 @@ export class RunManager {
     const parseLine = def.createParser ? def.createParser() : null;
     let stdoutBuffer = '';
     let stderrTail = '';
+    // Kept for failure classification: many CLIs print the real reason (quota / auth / 429) to
+    // stdout as an error frame, while stderr stays empty. Without this tail the only thing left to
+    // report was "exit code 1".
+    let stdoutTail = '';
+    let agentErrorText = '';
+    const recordUsageEvent = (payload: DaemonAgentPayload) => {
+      if (payload.type === 'usage') {
+        recordUsage(def.id, {
+          inputTokens: payload.usage?.inputTokens,
+          outputTokens: payload.usage?.outputTokens,
+          costUsd: payload.costUsd,
+        });
+      }
+    };
 
     const emitParsed = (line: string) => {
       // For ndjson the durable session handle is extracted from the raw line (e.g. claude init frame)
       const sid = def.sessionIdFromLine?.(line);
       if (sid) run.durableSessionId = sid;
+      // Error frames are the main stream's own words about why it died — keep the latest one.
+      const frameError = frameErrorText(line);
+      if (frameError) agentErrorText = frameError;
       for (const payload of parseLine?.(line) ?? []) {
         // Text from sub-agents (parent_tool_use_id != null) does not count toward the main answer
         if (payload.type === 'text_delta' && !payload.parentToolUseId) {
           run.assistantText += payload.delta;
         }
+        if (payload.type === 'status' && payload.label === 'agent 错误' && payload.detail) {
+          agentErrorText = payload.detail;
+        }
+        recordUsageEvent(payload);
         this.emitAgent(run, payload);
       }
     };
@@ -242,6 +269,7 @@ export class RunManager {
           if (agentPayload.type === 'text_delta' && !agentPayload.parentToolUseId) {
             run.assistantText += agentPayload.delta;
           }
+          recordUsageEvent(agentPayload);
           this.emitAgent(run, agentPayload);
         },
         onTerminal: (kind) => {
@@ -249,7 +277,13 @@ export class RunManager {
           if (kind === 'completed') {
             this.finishRun(run, 0, undefined, true);
           } else {
-            this.finishRun(run, 1, acpErrorMessage ?? 'ACP 会话失败', true);
+            const failure = classifyAgentFailure({
+              text: acpErrorMessage ?? '',
+              exitCode: 1,
+              agentName: def.name,
+              bin: def.bin,
+            });
+            this.finishRun(run, 1, failure.message, true, failure);
           }
           // Process-tree teardown ownership has been handed off: give the agent a chance to exit
           // on its own, SIGTERM on timeout
@@ -282,6 +316,7 @@ export class RunManager {
           if (agentPayload.type === 'text_delta') {
             run.assistantText += agentPayload.delta;
           }
+          recordUsageEvent(agentPayload);
           this.emitAgent(run, agentPayload);
         },
         onTerminal: (kind) => {
@@ -289,7 +324,13 @@ export class RunManager {
           if (kind === 'completed') {
             this.finishRun(run, 0, undefined, true);
           } else {
-            this.finishRun(run, 1, dshErrorMessage ?? 'dsh profile 会话失败', true);
+            const failure = classifyAgentFailure({
+              text: dshErrorMessage ?? '',
+              exitCode: 1,
+              agentName: def.name,
+              bin: def.bin,
+            });
+            this.finishRun(run, 1, failure.message, true, failure);
           }
           setTimeout(() => {
             try {
@@ -313,9 +354,14 @@ export class RunManager {
       });
     }
 
+    child.stdout.setEncoding('utf8');
+    child.stdout.on('data', (chunk: string) => {
+      stdoutTail = (stdoutTail + chunk).slice(-8000);
+    });
+
     child.stderr.setEncoding('utf8');
     child.stderr.on('data', (chunk: string) => {
-      stderrTail = (stderrTail + chunk).slice(-4000);
+      stderrTail = (stderrTail + chunk).slice(-8000);
     });
 
     child.on('error', (error) => {
@@ -340,7 +386,7 @@ export class RunManager {
       }
     }, 15_000);
 
-    child.on('exit', (code, signal) => {
+    child.on('exit', (code) => {
       if (watchdog) clearInterval(watchdog);
       // Flush any trailing partial line.
       if (def.streamFormat !== 'acp' && def.streamFormat !== 'dsh-profile' && stdoutBuffer.trim()) {
@@ -351,15 +397,33 @@ export class RunManager {
         return;
       }
       if (code === 0) {
+        // Some CLIs exit 0 while the result frame says the turn failed (quota / auth). Only a
+        // zero-output turn is treated as a failure: partial output still belongs to the user.
+        const failure = agentErrorText.trim()
+          ? classifyAgentFailure({
+              text: [agentErrorText, stderrTail].join('\n'),
+              exitCode: code,
+              agentName: def.name,
+              bin: def.bin,
+            })
+          : null;
+        if (
+          failure &&
+          (failure.kind === 'quota' || failure.kind === 'rate_limit' || failure.kind === 'auth') &&
+          !run.assistantText.trim()
+        ) {
+          this.finishRun(run, code, failure.message, true, failure);
+          return;
+        }
         this.finishRun(run, code, undefined, true);
       } else {
-        const detail = stderrTail.trim().split('\n').slice(-3).join(' ').slice(0, 500);
-        this.finishRun(
-          run,
-          code,
-          `agent 退出码 ${code}${signal ? `（${signal}）` : ''}${detail ? `：${detail}` : ''}`,
-          true,
-        );
+        const failure = classifyAgentFailure({
+          text: [agentErrorText, stderrTail, stdoutTail].filter(Boolean).join('\n'),
+          exitCode: code,
+          agentName: def.name,
+          bin: def.bin,
+        });
+        this.finishRun(run, code, failure.message, true, failure);
       }
     });
 
@@ -434,10 +498,26 @@ export class RunManager {
     return { unsubscribe: () => run.listeners.delete(listener), terminal: false };
   }
 
-  private finishRun(run: RunRecord, code: number | null, error?: string, emitEnd = false) {
+  private finishRun(
+    run: RunRecord,
+    code: number | null,
+    error?: string,
+    emitEnd = false,
+    failure?: ChatRunError,
+  ) {
     if (run.status !== 'running' && run.status !== 'cancelled') return;
     if (run.status === 'running') {
       run.status = error ? 'failed' : 'completed';
+    }
+    // Quota memory: an exhausted agent must not look healthy the next time settings is opened,
+    // and a successful turn is the only proof that its quota is usable again.
+    if (failure && (failure.kind === 'quota' || failure.kind === 'rate_limit')) {
+      recordQuotaExhausted(run.agentId, {
+        detail: failure.message,
+        resetAt: failure.retryAfterAt ?? null,
+      });
+    } else if (!error) {
+      recordQuotaOk(run.agentId);
     }
     // Capture the ACP session handle before the controller tears down (durable first, else ACP sessionId)
     if (run.acpSession) {
@@ -451,6 +531,7 @@ export class RunManager {
     run.terminalAt = Date.now();
     run.exitCode = code;
     if (error) run.error = error;
+    if (failure) run.runError = failure;
     // Artifact diff: done before the end frame is published (matching open-design's terminal
     // chokepoint timing), computed once per run (the cancelled path may re-enter finishRun).
     if (!run.artifacts && run.workspaceSnapshot && run.cwd) {
@@ -465,7 +546,18 @@ export class RunManager {
       run.workspaceSnapshot = undefined;
     }
     if (error) {
-      this.emit(run, 'error', { code: 'agent_error', message: error });
+      this.emit(run, 'error', {
+        code: errorCodeOf(failure?.kind ?? 'agent'),
+        message: error,
+        ...(failure
+          ? {
+              kind: failure.kind,
+              ...(failure.detail ? { detail: failure.detail } : {}),
+              retryAfterAt: failure.retryAfterAt ?? null,
+              exitCode: failure.exitCode ?? code,
+            }
+          : {}),
+      });
     }
     if (emitEnd) {
       this.emit(run, 'end', {
@@ -514,4 +606,43 @@ export class RunManager {
       this.runs.delete(run.id);
     }
   }
+}
+
+/**
+ * Read the failure out of one stdout line when the CLI reports it as a JSON frame instead of a
+ * non-zero exit.
+ *
+ * Claude Code, for example, prints on quota exhaustion:
+ *   {"type":"result","is_error":true,"result":"Claude AI usage limit reached|1730000000"}
+ * Without reading it here, the only evidence left is the exit code, which is exactly the
+ * "agent 退出码 1" the user could do nothing with.
+ */
+function frameErrorText(line: string): string | null {
+  const trimmed = line.trim();
+  if (!trimmed.startsWith('{')) return null;
+  if (!trimmed.includes('"is_error"') && !trimmed.includes('"error"')) return null;
+  try {
+    const frame = JSON.parse(trimmed) as {
+      type?: string;
+      is_error?: boolean;
+      result?: unknown;
+      error?: unknown;
+      message?: unknown;
+      parent_tool_use_id?: unknown;
+    };
+    // A sub-agent's failure is its own: it must not turn the main turn into a failure.
+    if (typeof frame.parent_tool_use_id === 'string' && frame.parent_tool_use_id) return null;
+    if (frame.type === 'result' && frame.is_error === true) {
+      return typeof frame.result === 'string' && frame.result.trim()
+        ? frame.result
+        : 'agent 返回错误';
+    }
+    if (frame.type === 'error') {
+      if (typeof frame.error === 'string' && frame.error.trim()) return frame.error;
+      if (typeof frame.message === 'string' && frame.message.trim()) return frame.message;
+    }
+  } catch {
+    // Not a complete JSON frame (plain-text adapters) — ignore.
+  }
+  return null;
 }

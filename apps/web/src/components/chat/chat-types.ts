@@ -3,7 +3,12 @@
  * [OUTPUT]: Chat UI state types, shared styles and pure-function utilities.
  * [POS]: Type and pure-utility layer shared by src/components/chat and src/components/workspace.
  */
-import type { ChatAttachment, ChatMessage, WorkspaceFileKind } from '@remixclip/contracts';
+import type {
+  ChatAttachment,
+  ChatMessage,
+  ChatRunErrorKind,
+  WorkspaceFileKind,
+} from '@remixclip/contracts';
 import { workspaceFileKind } from '@remixclip/contracts';
 import {
   BookOpen,
@@ -71,13 +76,31 @@ export type TurnItem =
   | { kind: 'thinking'; text: string }
   | { kind: 'tool'; id: string };
 
+/**
+ * A failed turn, in the shape the error card needs.
+ *
+ * Keeping the kind alongside the text is the whole point: "额度不足" and "未登录" must not render
+ * the same grey paragraph, and a quota error carries a reset time worth showing.
+ */
+export interface RunErrorState {
+  /** One-line summary; comes from the daemon (localized copy is derived from `kind`). */
+  message: string;
+  kind?: ChatRunErrorKind;
+  /** Raw agent output, behind the "原始输出" expander. */
+  detail?: string;
+  /** Expected quota reset (epoch ms). */
+  resetAt?: number | null;
+  /** Process exit code, shown as a secondary fact only. */
+  exitCode?: number | null;
+}
+
 export interface LiveTurn {
   statusLabel: string;
   /** Got thinking but hasn't spoken/acted yet → the shell header shows 'Thinking' */
   thinking: boolean;
   items: TurnItem[];
   toolCalls: ToolCall[];
-  error?: string;
+  error?: RunErrorState;
   stopped?: boolean;
   startedAt: number;
 }
@@ -87,7 +110,7 @@ export interface UiMessage extends ChatMessage {
   turnItems?: TurnItem[];
   stopped?: boolean;
   elapsedMs?: number;
-  error?: string;
+  error?: RunErrorState;
 }
 
 /** A file the artifact viewer can open; every row (message list, folder panel) produces one. */
@@ -173,12 +196,25 @@ export const styles = {
  */
 export function withTurnProcess(message: ChatMessage): UiMessage {
   if (!message.process) return message;
+  const failure = message.process.error;
   return {
     ...message,
     toolCalls: message.process.toolCalls,
     turnItems: message.process.items,
     // The "Worked for …" header is rendered from elapsedMs on both live and replayed turns.
     elapsedMs: message.process.elapsedMs,
+    // A failed turn keeps its error card across reloads (same shape as the live turn).
+    ...(failure
+      ? {
+          error: {
+            message: failure.message,
+            kind: failure.kind,
+            detail: failure.detail,
+            resetAt: failure.retryAfterAt ?? null,
+            exitCode: failure.exitCode ?? null,
+          },
+        }
+      : {}),
   };
 }
 

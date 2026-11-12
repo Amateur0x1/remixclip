@@ -12,6 +12,7 @@ import type {
   ChatRunStatusResponse,
   ChatSseEndPayload,
   ConnectionTestResponse,
+  SseErrorPayload,
   Conversation,
   CreateProjectResponse,
   DaemonAgentPayload,
@@ -354,7 +355,8 @@ export interface RunStreamHandlers {
   onToolResult?: (ev: Extract<DaemonAgentPayload, { type: 'tool_result' }>) => void;
   onToolInFlight?: (ev: Extract<DaemonAgentPayload, { type: 'tool_in_flight' }>) => void;
   onUsage?: (ev: { inputTokens?: number; outputTokens?: number; costUsd?: number }) => void;
-  onError?: (message: string) => void;
+  /** Structured failure from the daemon (kind + detail + quota reset time). */
+  onError?: (error: SseErrorPayload) => void;
   /** Full end-frame payload (including the run's artifact list). */
   onEnd?: (payload: ChatSseEndPayload) => void;
   /**
@@ -430,9 +432,10 @@ export async function streamRunEvents(
           max: DAEMON_STREAM_RECONNECT_LIMIT,
           phase: 'exhausted',
         });
-        handlers.onError?.(
-          error instanceof Error ? error.message : t('errors.sseInterrupted'),
-        );
+        handlers.onError?.({
+          code: 'transport_error',
+          message: error instanceof Error ? error.message : t('errors.sseInterrupted'),
+        });
         return;
       }
       handlers.onReconnect?.({
@@ -453,8 +456,11 @@ function dispatchFrame(frame: SseFrame, handlers: RunStreamHandlers): boolean {
     return false;
   }
   if (frame.event === 'error') {
-    const data = frame.data as { message?: string };
-    handlers.onError?.(data.message ?? t('errors.unknown'));
+    const data = frame.data as SseErrorPayload;
+    handlers.onError?.({
+      ...data,
+      message: data.message ?? t('errors.unknown'),
+    });
     return true;
   }
   if (frame.event === 'end') {

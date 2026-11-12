@@ -52,6 +52,8 @@ const FAILURE_LABEL_KEY: Record<ConnectionTestResponse['kind'], DictKey> = {
   ok: 'agent.testOk',
   binary: 'agent.testBinary',
   auth: 'agent.testAuth',
+  quota: 'agent.testQuota',
+  rate_limit: 'agent.testRateLimit',
   network: 'agent.testNetwork',
   model: 'agent.testModel',
   timeout: 'agent.testTimeout',
@@ -162,6 +164,21 @@ export function SettingsPane({
   };
 
   const selectedAgent = availableAgents.find((agent) => agent.id === agentId) ?? null;
+  // Last known quota reading (observed from real runs — see daemon/runtimes/quota-state.ts).
+  const quota = selectedAgent?.quota;
+  const quotaStatusText =
+    quota?.status === 'exhausted'
+      ? t('settings.quotaExhausted')
+      : quota?.status === 'ok'
+        ? t('settings.quotaOk')
+        : t('settings.quotaUnknown');
+  const quotaUsageText =
+    quota?.lastUsage && (quota.lastUsage.inputTokens != null || quota.lastUsage.outputTokens != null)
+      ? t('settings.quotaLastUsage', {
+          input: quota.lastUsage.inputTokens ?? 0,
+          output: quota.lastUsage.outputTokens ?? 0,
+        })
+      : '';
 
   const connect = async (agent: AgentInfo) => {
     setConnectingId(agent.id);
@@ -285,6 +302,11 @@ export function SettingsPane({
                               {t('settings.needsLogin')}
                             </span>
                           )}
+                          {agent.quota?.status === 'exhausted' && (
+                            <span className="shrink-0 rounded-full bg-amber-500/10 px-1.5 py-px text-[10px] text-amber-600 dark:text-amber-400">
+                              {t('settings.quotaExhausted')}
+                            </span>
+                          )}
                         </span>
                         <span className="truncate text-[11.5px] leading-4 text-muted-foreground" title={agent.path}>
                           {agent.version ?? t('agent.installed')}
@@ -328,6 +350,25 @@ export function SettingsPane({
               The model is NOT configured here: it is a per-turn choice in the composer footer,
               so this row only proves the agent works with whatever the composer sent.
             */}
+            {selectedAgent && (
+              <div className="flex items-start gap-3 px-4 py-2.5">
+                <span className="grid min-w-0 flex-1 gap-0.5">
+                  <span className="text-[13px] font-medium text-foreground">{t('settings.quotaLabel')}</span>
+                  <span
+                    className={cn(
+                      'text-[11.5px] leading-4',
+                      quota?.status === 'exhausted' ? 'text-amber-600 dark:text-amber-400' : 'text-muted-foreground',
+                    )}
+                  >
+                    {[quotaStatusText, quota?.detail?.trim(), quotaUsageText].filter(Boolean).join(' · ')}
+                  </span>
+                  <span className="text-[11px] leading-4 text-muted-foreground/70">
+                    {t('settings.quotaHint')}
+                  </span>
+                </span>
+              </div>
+            )}
+
             {selectedAgent && (
               <div className="flex items-center gap-3 px-4 py-2.5">
                 <span className="grid min-w-0 flex-1 gap-0.5">
