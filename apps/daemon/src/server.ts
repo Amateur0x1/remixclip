@@ -20,6 +20,7 @@ import { registerLibraryRoutes } from './routes/library.js';
 import { openDatabase, getDefaultDbPath } from './db.js';
 import { initAppConfig } from './app-config.js';
 import { RunManager } from './runtimes/runs.js';
+import { initQuotaState } from './runtimes/quota-state.js';
 import { isRegisteredWebOrigin, listWebOrigins, seedWebOriginsFromEnv } from './web-origins.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -185,6 +186,8 @@ export async function startRemixclipServer(options: RemixclipServeOptions): Prom
 
   // Initialize app config store
   initAppConfig(dataDir);
+  // Restore the last known quota reading per agent (so a restart does not forget an exhaustion).
+  initQuotaState(dataDir);
   // Trust the launcher-declared web origin before the first request arrives; the
   // web sidecar can also register itself later over IPC (REGISTER_WEB_URL).
   const seededOrigins = seedWebOriginsFromEnv();

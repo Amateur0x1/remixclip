@@ -193,6 +193,21 @@ export interface Dict {
   'chat.loadingHistory': string;
   'chat.thinking': string;
 
+  // ── run failure card ───────────────────────────────────────────────────
+  'runError.auth': string;
+  'runError.authTitle': string;
+  'runError.exitCode': string;
+  'runError.network': string;
+  'runError.networkTitle': string;
+  'runError.quota': string;
+  'runError.quotaTitle': string;
+  'runError.rateLimit': string;
+  'runError.rateLimitTitle': string;
+  'runError.rawOutput': string;
+  'runError.resetSuffix': string;
+  'runError.unknown': string;
+  'runError.unknownTitle': string;
+
   // ── artifacts panel / viewer ───────────────────────────────────────────
   'artifacts.toggle': string;
   'artifacts.title': string;
@@ -284,6 +299,7 @@ export interface Dict {
   // ── platform names ─────────────────────────────────────────────────────
   'platform.bilibili': string;
   'platform.douyin': string;
+  'platform.pinterest': string;
   'platform.xhs': string;
 
   // ── library: list ──────────────────────────────────────────────────────
@@ -522,6 +538,8 @@ export interface Dict {
   'agent.testModel': string;
   'agent.testNetwork': string;
   'agent.testOk': string;
+  'agent.testQuota': string;
+  'agent.testRateLimit': string;
   'agent.testTimeout': string;
   'agent.testUnknown': string;
   'agent.testing': string;
@@ -543,6 +561,13 @@ export interface Dict {
   'settings.needsLogin': string;
   'settings.portHint': string;
   'settings.portLabel': string;
+  'settings.quotaExhausted': string;
+  'settings.quotaHint': string;
+  'settings.quotaLabel': string;
+  'settings.quotaLastUsage': string;
+  'settings.quotaOk': string;
+  'settings.quotaOpenSettings': string;
+  'settings.quotaUnknown': string;
   'settings.testHint': string;
   'settings.testRow': string;
   'settings.title': string;

@@ -12,6 +12,7 @@ import {
   ArrowBigUp,
   ArrowDown,
   ChevronDown,
+  Coins,
   CornerDownLeft,
   FileText,
   Film,
@@ -41,6 +42,7 @@ import { Tag } from '@/components/ui/tag';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { TurnStatus } from '@/components/ui/turn-status';
 import { Reconnect } from '@/components/chat/Reconnect';
+import { RunErrorNotice } from '@/components/chat/RunErrorNotice';
 import { MessageView, TurnItems } from '@/components/chat/MessageView';
 import { ArtifactPanel } from '@/components/chat/ArtifactPanel';
 import { ArtifactPreviewDialog } from '@/components/chat/ArtifactPreviewDialog';
@@ -601,7 +603,7 @@ export function ChatConversationPane({
                       />
                     )}
                     <TurnItems items={turn.items} toolCalls={turn.toolCalls} streaming />
-                    {turn.error && <div className={styles.execError}>❌ {turn.error}</div>}
+                    {turn.error && <RunErrorNotice error={turn.error} />}
                   </div>
                 )}
 
@@ -652,6 +654,28 @@ export function ChatConversationPane({
                     onClick={() => setQueued((items) => items.filter((item) => item.key !== currentKey))}
                   >
                     {t('common.clear')}
+                  </Button>
+                </div>
+              )}
+              {/* Quota is a precondition for sending, not a surprise to discover after the turn fails:
+                  if the last real run reported an exhaustion, say so above the input. */}
+              {agent?.quota?.status === 'exhausted' && (
+                <div
+                  role="status"
+                  className="mb-2 flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/[0.08] px-3 py-2 text-[11.5px] leading-5 text-amber-700 dark:text-amber-300"
+                >
+                  <Coins className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
+                  <span className="min-w-0 flex-1">
+                    {agent.quota.detail?.trim() || t('settings.quotaExhausted')}
+                  </span>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="xs"
+                    className="-mr-1 shrink-0 text-amber-700 hover:bg-amber-500/10 hover:text-amber-800 dark:text-amber-300"
+                    onClick={onOpenSettings}
+                  >
+                    {t('settings.quotaOpenSettings')}
                   </Button>
                 </div>
               )}

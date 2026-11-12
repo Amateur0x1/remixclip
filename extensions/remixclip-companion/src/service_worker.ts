@@ -222,6 +222,9 @@ async function handleSniffData(msg: SniffMessage): Promise<void> {
     case "douyin":
       handleDouyin(data, msg, payload, ctx, tx);
       break;
+    case "pinterest":
+      handlePinterest(data, msg, payload, ctx, tx);
+      break;
   }
 
   const change = tx.toChange(data);
@@ -1026,6 +1029,211 @@ function mergeDyUserProfile(data: SnifferData, raw: Record<string, unknown>, ctx
     total_favorited: (user.total_favorited as number) || undefined,
     platform: "douyin",
   });
+}
+
+// ═══════════════════════════════════════════
+// ██  Pinterest handler
+// ═══════════════════════════════════════════
+
+/**
+ * Pinterest has only three capture surfaces we care about:
+ * - `pin_detail` / `pinterest_dom`: one pin (resource response or page fallback)
+ * - `pin_feed`: many pins from a home/search/board response
+ * - `pin_comment`: comments of the pin currently open
+ *
+ * The injected script already trims each pin to the shape below, but every field is read
+ * defensively: Pinterest changes its resource envelopes often, and an older/newer page shape must
+ * never lose the whole capture.
+ */
+function handlePinterest(
+  data: SnifferData,
+  msg: SniffMessage,
+  payload: Record<string, unknown>,
+  ctx: PageContext,
+  tx: Tx
+): void {
+  switch (msg.source) {
+    case "pin_detail":
+    case "pinterest_dom":
+      mergePinterestPin(data, payload, ctx, tx, "note_detail");
+      break;
+    case "pin_feed": {
+      const pins = Array.isArray(payload.pins) ? payload.pins : [];
+      const source = ctx.page === "user" ? "user" as const
+        : ctx.page === "note_detail" ? "note_detail" as const
+        : "explore" as const;
+      for (const item of pins) {
+        mergePinterestPin(data, item as Record<string, unknown>, ctx, tx, source);
+      }
+      break;
+    }
+    case "pin_comment":
+      mergePinterestComments(data, payload, tx);
+      break;
+  }
+}
+
+/** Pinterest sends ISO dates on pins but epoch seconds on some comment resources. */
+function pinterestTime(value: unknown): number {
+  if (typeof value === "string" && value.trim()) {
+    const parsed = Date.parse(value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  const n = toInt(value);
+  if (n <= 0) return 0;
+  return n < 1_000_000_000_000 ? n * 1000 : n;
+}
+
+function pinterestStat(stats: Record<string, unknown>, ...keys: string[]): number {
+  for (const key of keys) {
+    const value = stats[key];
+    if (value != null) return toInt(value);
+  }
+  return 0;
+}
+
+function parsePinterestPin(raw: Record<string, unknown>, source: NoteEntry["source"], sourceUserId?: string): NoteEntry | null {
+  const rawId = raw.id ?? raw.pin_id;
+  if (rawId == null || !/^\d+$/.test(String(rawId))) return null;
+  const noteId = String(rawId);
+
+  const creator = (raw.creator ?? raw.user ?? {}) as Record<string, unknown>;
+  const board = (raw.board ?? {}) as Record<string, unknown>;
+  const aggregated = ((raw.aggregated_pin_data as Record<string, unknown> | undefined)?.aggregated_stats ?? {}) as Record<string, unknown>;
+  const stats = { ...aggregated, ...((raw.stats as Record<string, unknown> | undefined) ?? {}) };
+
+  const images = Array.isArray(raw.images)
+    ? raw.images.filter((url): url is string => isHttpUrl(url))
+    : [];
+
+  const videoCandidates = (Array.isArray(raw.videos) ? raw.videos : [])
+    .map((item) => item as Record<string, unknown>)
+    .map((item) => ({
+      url: textValue(item.url, item.video_url),
+      width: toInt(item.width),
+      height: toInt(item.height),
+      duration: toInt(item.duration),
+    }))
+    .filter((item): item is { url: string; width: number; height: number; duration: number } => isHttpUrl(item.url))
+    .sort((a, b) => (b.width * b.height) - (a.width * a.height));
+  const bestVideo = videoCandidates[0];
+
+  const title = textValue(raw.title, raw.grid_title) ?? "";
+  const desc = textValue(raw.description, raw.grid_description, raw.closeup_unified_description) ?? "";
+  const authorName = textValue(creator.full_name, creator.name, creator.username) ?? "";
+  const authorId = textValue(creator.username, creator.id) ?? "";
+
+  const tags: string[] = [];
+  if (typeof board.name === "string" && board.name.trim()) tags.push(board.name.trim());
+  if (Array.isArray(raw.tags)) {
+    for (const tag of raw.tags) {
+      const name = typeof tag === "string" ? tag : textValue((tag as Record<string, unknown>)?.name);
+      if (name && tags.indexOf(name) < 0) tags.push(name);
+    }
+  }
+
+  const pageUrl = `https://www.pinterest.com/pin/${noteId}/`;
+
+  return {
+    note_id: noteId,
+    title: title || desc.slice(0, 80),
+    desc: desc || title,
+    type: bestVideo ? "video" : images.length > 0 ? "image" : "normal",
+    time: pinterestTime(raw.created_at ?? raw.createdAt),
+    ip_location: "",
+    like_count: pinterestStat(stats, "likes", "reactions", "reaction_count"),
+    collect_count: pinterestStat(stats, "saves", "save_count", "repin_count"),
+    comment_count: pinterestStat(stats, "comments", "comment_count"),
+    share_count: pinterestStat(stats, "shares", "share_count"),
+    tags: tags.slice(0, 20),
+    images: images.slice(0, 8),
+    video: bestVideo
+      ? {
+          page_url: pageUrl,
+          video_url: bestVideo.url,
+          video_urls: videoCandidates.map((item) => item.url),
+          duration: bestVideo.duration || undefined,
+          width: bestVideo.width || undefined,
+          height: bestVideo.height || undefined,
+          first_frame_fileid: images[0],
+        }
+      : undefined,
+    author: authorName || undefined,
+    author_id: authorId || undefined,
+    source,
+    source_user_id: sourceUserId,
+    platform: "pinterest",
+  };
+}
+
+function mergePinterestPin(
+  data: SnifferData,
+  raw: Record<string, unknown>,
+  ctx: PageContext,
+  tx: Tx,
+  source: NoteEntry["source"]
+): void {
+  const sourceUserId = ctx.page === "user" ? ctx.user_id : undefined;
+  const entry = parsePinterestPin(raw, source, sourceUserId);
+  if (!entry) return;
+
+  const existing = data.notes[entry.note_id];
+  data.notes[entry.note_id] = {
+    ...existing,
+    ...entry,
+    // Feed responses can be thinner than the detail page: never overwrite a richer field with
+    // an empty one, and never lose the stream address captured earlier.
+    title: entry.title || existing?.title || "",
+    desc: entry.desc || existing?.desc || "",
+    images: entry.images.length > 0 ? entry.images : existing?.images ?? [],
+    tags: entry.tags.length > 0 ? entry.tags : existing?.tags ?? [],
+    video: entry.video ?? existing?.video,
+    like_count: entry.like_count || existing?.like_count || 0,
+    collect_count: entry.collect_count || existing?.collect_count || 0,
+    comment_count: entry.comment_count || existing?.comment_count || 0,
+    share_count: entry.share_count || existing?.share_count || 0,
+    author: entry.author ?? existing?.author,
+    author_id: entry.author_id ?? existing?.author_id,
+    source: entry.source_user_id ? entry.source : (existing?.source ?? entry.source),
+    source_user_id: entry.source_user_id ?? existing?.source_user_id,
+  };
+  tx.note(entry.note_id);
+
+  if (ctx.page === "user" && entry.author) {
+    updateUserProfile(data, ctx.user_id, entry.author, tx, { platform: "pinterest" });
+  }
+}
+
+function mergePinterestComments(data: SnifferData, raw: Record<string, unknown>, tx: Tx): void {
+  data.stats.commentRequests++;
+  tx.stats();
+
+  const comments = Array.isArray(raw.comments) ? raw.comments : [];
+  const fallbackPinId = textValue(raw.pin_id) ?? "";
+  for (const item of comments) {
+    const comment = item as Record<string, unknown>;
+    const cid = textValue(comment.cid, comment.id, comment.comment_id);
+    const body = textValue(comment.text, comment.content);
+    const pinId = textValue(comment.pin_id) || fallbackPinId;
+    if (!cid || !body || !pinId) continue;
+
+    const entry: CommentEntry = {
+      cid,
+      text: body,
+      like_count: toInt(comment.like_count),
+      sub_comment_count: 0,
+      create_time: Math.round(pinterestTime(comment.created_at ?? comment.create_time) / 1000),
+      user_name: textValue(comment.user_name) ?? "",
+      ip_label: textValue(comment.ip_label) ?? "",
+    };
+
+    if (!data.comments[pinId]) data.comments[pinId] = [];
+    const existing = data.comments[pinId];
+    if (!existing.some((c) => c.cid === entry.cid)) {
+      existing.push(entry);
+      tx.comment(pinId);
+    }
+  }
 }
 
 // ═══════════════════════════════════════════

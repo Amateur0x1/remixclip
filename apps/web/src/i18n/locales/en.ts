@@ -131,6 +131,22 @@ export const en: Dict = {
   'chat.loadingHistory': 'Loading conversation',
   'chat.thinking': 'Thinking',
 
+  // ── run failure card ─────────────────────────────────────────────────
+  'runError.quotaTitle': 'Out of quota',
+  'runError.quota':
+    "This agent's available quota is exhausted{reset}. Top up, wait for the reset, or switch agents in Settings.",
+  'runError.rateLimitTitle': 'Rate limited',
+  'runError.rateLimit': 'The agent is being throttled{reset}. Try again in a moment.',
+  'runError.authTitle': 'Not signed in',
+  'runError.auth': 'Sign in to this agent in your terminal, then send the message again.',
+  'runError.networkTitle': 'Network unreachable',
+  'runError.network': 'Could not reach the agent service. Check your network, proxy or base URL and retry.',
+  'runError.unknownTitle': 'Run failed',
+  'runError.unknown': 'The agent failed without a recognizable error. Expand the raw output for details.',
+  'runError.resetSuffix': ', expected back at {time}',
+  'runError.exitCode': 'exit code {code}',
+  'runError.rawOutput': 'Raw output',
+
   // ── artifacts panel / viewer ───────────────────────────────────────────
   'artifacts.toggle': 'Artifacts',
   'artifacts.title': 'Artifacts',
@@ -222,6 +238,7 @@ export const en: Dict = {
   // ── platform names ─────────────────────────────────────────────────────
   'platform.bilibili': 'Bilibili',
   'platform.douyin': 'Douyin',
+  'platform.pinterest': 'Pinterest',
   'platform.xhs': 'Xiaohongshu',
 
   // ── library: list ──────────────────────────────────────────────────────
@@ -241,7 +258,7 @@ export const en: Dict = {
   'library.loadMore': 'Load more ({count} left)',
   'library.loadingMore': 'Loading…',
   'library.moreAria': 'More library actions',
-  'library.onboardingDesc': 'Browse Xiaohongshu, Bilibili, and Douyin as usual — the RemixClip Chrome extension captures in the background. Click "Send to RemixClip" in the extension and covers, captions, engagement data, and comments show up here.',
+  'library.onboardingDesc': 'Browse Xiaohongshu, Bilibili, Douyin, or Pinterest as usual — the RemixClip Chrome extension captures in the background. Click "Send to RemixClip" in the extension and covers, captions, engagement data, and comments show up here.',
   'library.onboardingTitle': 'Bring social media material into your workspace',
   'library.readFailed': 'Failed to read the library',
   'library.removedNotice': 'Removed from the library',
@@ -477,6 +494,8 @@ Requirements:
   'agent.testModel': 'Model unavailable',
   'agent.testNetwork': 'Network unreachable',
   'agent.testOk': 'Connection OK',
+  'agent.testQuota': 'Out of quota',
+  'agent.testRateLimit': 'Rate limited',
   'agent.testTimeout': 'Test timed out',
   'agent.testUnknown': 'Test failed',
   'agent.testing': 'Testing…',
@@ -498,6 +517,13 @@ Requirements:
   'settings.needsLogin': 'Signed out',
   'settings.portHint': 'The companion connects over this port — enter the same number in the extension.',
   'settings.portLabel': 'Port',
+  'settings.quotaLabel': 'Quota',
+  'settings.quotaOk': 'OK',
+  'settings.quotaOpenSettings': 'Settings',
+  'settings.quotaExhausted': 'Exhausted',
+  'settings.quotaUnknown': 'No record yet',
+  'settings.quotaLastUsage': 'Last usage: {input} in / {output} out tokens',
+  'settings.quotaHint': 'Quota status is observed from real runs — probing it would itself cost quota.',
   'settings.testHint': 'Checks this agent with the model picked in the chat composer.',
   'settings.testRow': 'Connection test',
   'settings.title': 'Settings',

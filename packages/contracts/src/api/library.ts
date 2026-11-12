@@ -1,6 +1,6 @@
 /**
- * [INPUT]: Social media data (Xiaohongshu / Bilibili / Douyin) exported by the browser extension and the
- *          HTTP payloads exchanged with web/daemon.
+ * [INPUT]: Social media data (Xiaohongshu / Bilibili / Douyin / Pinterest) exported by the browser
+ *          extension and the HTTP payloads exchanged with web/daemon.
  * [OUTPUT]: The library zod schemas (the single validation source across process boundaries) and
  *           types derived from them.
  * [POS]: Cross-end contract for the workbench "library"; daemon uses parse to validate input, web uses
@@ -11,7 +11,7 @@ import { z } from 'zod';
 
 // ── Platform ───────────────────────────────────────────────────────────────
 
-export const SOCIAL_PLATFORMS = ['xhs', 'bilibili', 'douyin'] as const;
+export const SOCIAL_PLATFORMS = ['xhs', 'bilibili', 'douyin', 'pinterest'] as const;
 
 export const socialPlatformSchema = z.enum(SOCIAL_PLATFORMS);
 
@@ -23,7 +23,7 @@ export const LIBRARY_PLATFORM_FILTERS = ['all', ...SOCIAL_PLATFORMS] as const;
 /** Error message for the platform filter (an unknown platform is a client bug and should not
  *  silently degrade to the `all` option). */
 const platformFilterSchema = z.enum(LIBRARY_PLATFORM_FILTERS, {
-  errorMap: () => ({ message: '不支持的平台，只接受 all / xhs / bilibili / douyin' }),
+  errorMap: () => ({ message: '不支持的平台，只接受 all / xhs / bilibili / douyin / pinterest' }),
 });
 
 export const LIBRARY_SORTS = ['imported', 'published', 'likes'] as const;
@@ -40,6 +40,8 @@ const PLATFORM_ALIASES: Record<string, SocialPlatform> = {
   bili: 'bilibili',
   douyin: 'douyin',
   dy: 'douyin',
+  pinterest: 'pinterest',
+  pin: 'pinterest',
 };
 
 /**
@@ -137,6 +139,7 @@ export const libraryCountsSchema = z.object({
   xhs: z.number(),
   bilibili: z.number(),
   douyin: z.number(),
+  pinterest: z.number(),
 });
 
 export type LibraryCounts = z.infer<typeof libraryCountsSchema>;

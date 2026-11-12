@@ -109,7 +109,14 @@ export function useWorkspaceChat() {
     if (!projectId) return;
     setConversations(await listConversations(projectId));
   }, []);
-  const runs = useWorkspaceRuns(currentConvId, refreshConversations);
+  // A settled run is also the moment the daemon may have recorded a quota exhaustion (or proved
+  // the agent usable again). Re-read the agent list so the composer banner / settings badge follow
+  // reality without asking the user to rescan.
+  const refreshAfterSettle = useCallback(async () => {
+    await refreshConversations();
+    void listAgents().then(setAgents).catch(() => undefined);
+  }, [refreshConversations]);
+  const runs = useWorkspaceRuns(currentConvId, refreshAfterSettle);
   const { viewConvRef, setMessages, setTurn, dispatchReconnect } = runs;
   /**
    * One-entry-per-conversation cache, so returning to a project paints its last known history

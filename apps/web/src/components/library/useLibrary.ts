@@ -21,7 +21,7 @@ interface PageSnapshot {
   counts: Counts;
 }
 
-const EMPTY_COUNTS: Counts = { all: 0, xhs: 0, bilibili: 0, douyin: 0 };
+const EMPTY_COUNTS: Counts = { all: 0, xhs: 0, bilibili: 0, douyin: 0, pinterest: 0 };
 const PAGE_SIZE = 60;
 /** Cache cap: query filter combinations can be many; beyond this, evict in insertion order. */
 const MAX_SNAPSHOTS = 24;

@@ -133,6 +133,22 @@ export const zhCN: Dict = {
   'chat.loadingHistory': '正在载入对话',
   'chat.thinking': '思考中',
 
+  // ── run failure card ─────────────────────────────────────────────────
+  'runError.quotaTitle': '额度不足',
+  'runError.quota':
+    '这个 Agent 的可用额度已用尽{reset}。可以充值额度、等待额度重置后再试，或在设置里切换到其他 Agent。',
+  'runError.rateLimitTitle': '请求过于频繁',
+  'runError.rateLimit': 'Agent 触发了限流{reset}，稍后再试即可。',
+  'runError.authTitle': '未登录或凭证已失效',
+  'runError.auth': '请先在终端完成该 Agent 的登录，然后重新发送。',
+  'runError.networkTitle': '网络不可达',
+  'runError.network': '无法连接 Agent 服务。请检查网络、代理或 Base URL 配置后重试。',
+  'runError.unknownTitle': '运行失败',
+  'runError.unknown': 'Agent 运行失败，且没有返回可识别的错误信息。展开原始输出可查看详情。',
+  'runError.resetSuffix': '，预计 {time} 恢复',
+  'runError.exitCode': '退出码 {code}',
+  'runError.rawOutput': '原始输出',
+
   // ── artifacts panel / viewer ───────────────────────────────────────────
   'artifacts.toggle': '产物',
   'artifacts.title': '产物',
@@ -224,6 +240,7 @@ export const zhCN: Dict = {
   // ── platform names ─────────────────────────────────────────────────────
   'platform.bilibili': 'B站',
   'platform.douyin': '抖音',
+  'platform.pinterest': 'Pinterest',
   'platform.xhs': '小红书',
 
   // ── library: list ──────────────────────────────────────────────────────
@@ -243,7 +260,7 @@ export const zhCN: Dict = {
   'library.loadMore': '加载更多（还有 {count} 条）',
   'library.loadingMore': '加载中…',
   'library.moreAria': '更多素材库操作',
-  'library.onboardingDesc': '正常浏览小红书、B站、抖音，Chrome 插件「RemixClip 素材助手」会在后台被动采集；在插件里点「发送到 RemixClip」，封面、文案、互动数据和评论就会出现在这里。',
+  'library.onboardingDesc': '正常浏览小红书、B站、抖音、Pinterest，Chrome 插件「RemixClip 素材助手」会在后台被动采集；在插件里点「发送到 RemixClip」，封面、文案、互动数据和评论就会出现在这里。',
   'library.onboardingTitle': '把社媒素材，收进工作台',
   'library.readFailed': '读取素材失败',
   'library.removedNotice': '已从素材库移除',
@@ -479,6 +496,8 @@ export const zhCN: Dict = {
   'agent.testModel': '模型不可用',
   'agent.testNetwork': '网络不通',
   'agent.testOk': '连接正常',
+  'agent.testQuota': '额度不足',
+  'agent.testRateLimit': '请求被限流',
   'agent.testTimeout': '测试超时',
   'agent.testUnknown': '测试失败',
   'agent.testing': '测试中…',
@@ -500,6 +519,13 @@ export const zhCN: Dict = {
   'settings.needsLogin': '未登录',
   'settings.portHint': '插件通过这个端口连接工作台，在插件里填同一个端口号。',
   'settings.portLabel': '端口',
+  'settings.quotaLabel': '额度',
+  'settings.quotaOk': '正常',
+  'settings.quotaOpenSettings': '去设置',
+  'settings.quotaExhausted': '已用尽',
+  'settings.quotaUnknown': '暂无记录',
+  'settings.quotaLastUsage': '上次用量：输入 {input} / 输出 {output} tokens',
+  'settings.quotaHint': '额度状态来自真实运行的观测；不会为了探测额度而额外消耗额度。',
   'settings.testHint': '用对话里选中的模型验证这个 Agent 是否可用。',
   'settings.testRow': '连接测试',
   'settings.title': '设置',

@@ -2,9 +2,10 @@
  * [INPUT]: post links and ids coming from the Chrome extension, pasted URLs, or stored library items.
  * [OUTPUT]: per-platform link schemas (hosts + path patterns), canonical link builders, the metric
  *           surface each platform exposes, and parse/build helpers derived from them.
- * [POS]: The one place that knows what a Xiaohongshu / Bilibili / Douyin post *is*. The daemon uses
- *        it to normalize page URLs and recover ids that the payload forgot; the web uses it to render
- *        platform-correct metrics and link labels. Adding a platform means editing this file only.
+ * [POS]: The one place that knows what a Xiaohongshu / Bilibili / Douyin / Pinterest post *is*. The
+ *        daemon uses it to normalize page URLs and recover ids that the payload forgot; the web uses
+ *        it to render platform-correct metrics and link labels. Adding a platform means editing this
+ *        file only.
  */
 import { z } from 'zod';
 import { SOCIAL_PLATFORMS, type SocialPlatform } from './library.js';
@@ -58,6 +59,29 @@ export const SOCIAL_PLATFORM_SCHEMAS: Record<SocialPlatform, SocialPlatformDefin
     // 抖音 shows 点赞 / 评论 / 收藏 / 分享 (comments rank above saves).
     metrics: ['likes', 'comments', 'collects', 'shares'],
     buildLink: (remoteId) => `https://www.douyin.com/video/${encodeURIComponent(remoteId)}`,
+  },
+  pinterest: {
+    // Pinterest runs the same web app on every country domain; a pin id is globally unique, so
+    // any of them can open a pin captured on another.
+    hosts: [
+      'pinterest.com',
+      'pinterest.co.uk',
+      'pinterest.ca',
+      'pinterest.com.au',
+      'pinterest.de',
+      'pinterest.fr',
+      'pinterest.es',
+      'pinterest.it',
+      'pinterest.jp',
+      'pinterest.co.kr',
+      'pinterest.com.mx',
+      'pinterest.com.br',
+    ],
+    // `/pin/<id>/` is the canonical shape; the trailing slug is optional.
+    postPatterns: [/^\/pin\/(\d+)/],
+    // Pinterest shows 收藏（saves）/ 评论 on a pin; likes and shares are not surfaced.
+    metrics: ['collects', 'comments'],
+    buildLink: (remoteId) => `https://www.pinterest.com/pin/${encodeURIComponent(remoteId)}/`,
   },
 };
 
