@@ -76,7 +76,13 @@ function SettingsSection({
         <h2 className="text-[11.5px] font-medium tracking-wide text-muted-foreground">{label}</h2>
         {action}
       </div>
-      <div className="divide-y divide-border/60 overflow-hidden rounded-xl border border-border/70 bg-card">
+      {/*
+        Flat outline only. `bg-card` is the thick glass pane; a bare bordered box
+        with no fill is promoted to the thin panel pane (solid-glass.css). Either
+        way the group sits on a glass layer, so name the fill explicitly:
+        `bg-transparent` is not a pane, leaving just the hairline outline.
+      */}
+      <div className="divide-y divide-border/60 overflow-hidden rounded-md border border-border bg-transparent">
         {children}
       </div>
     </section>
