@@ -38,6 +38,7 @@ const PLATFORMS: PlatformDef[] = [
   { key: "xhs", label: "小红书", icon: "/platform-xhs.png", color: "#ff6b6b", enabled: true },
   { key: "bilibili", label: "B站", icon: "📺", color: "#00a1d6", enabled: true },
   { key: "douyin", label: "抖音", icon: "🎵", color: "#111", enabled: true },
+  { key: "pinterest", label: "Pinterest", icon: "📌", color: "#e60023", enabled: true },
 ];
 
 /** Determine whether icon is an image path or an emoji */

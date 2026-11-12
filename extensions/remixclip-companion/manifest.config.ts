@@ -11,7 +11,7 @@ export default defineManifest({
   short_name: "RemixClip",
   // Version is maintained only in package.json, so two hand-written copies cannot drift
   version: pkg.version,
-  description: "被动采集小红书、B站、抖音的内容，一键推送到 RemixClip 素材库。",
+  description: "被动采集小红书、B站、抖音、Pinterest 的内容，一键推送到 RemixClip 素材库。",
   icons: {
     "16": "public/icon16.png",
     "48": "public/icon48.png",
@@ -60,6 +60,25 @@ export default defineManifest({
       matches: ["https://www.douyin.com/*"],
       run_at: "document_start",
     },
+    // Pinterest: the same app runs on every country domain, so all of them are matched.
+    {
+      js: ["src/content/pinterest-sniffer.ts"],
+      matches: [
+        "https://*.pinterest.com/*",
+        "https://*.pinterest.co.uk/*",
+        "https://*.pinterest.ca/*",
+        "https://*.pinterest.com.au/*",
+        "https://*.pinterest.de/*",
+        "https://*.pinterest.fr/*",
+        "https://*.pinterest.es/*",
+        "https://*.pinterest.it/*",
+        "https://*.pinterest.jp/*",
+        "https://*.pinterest.co.kr/*",
+        "https://*.pinterest.com.mx/*",
+        "https://*.pinterest.com.br/*",
+      ],
+      run_at: "document_start",
+    },
   ],
   web_accessible_resources: [
     {
@@ -77,6 +96,23 @@ export default defineManifest({
     {
       resources: ["src/content/dy-injected.js"],
       matches: ["https://www.douyin.com/*"],
+    },
+    {
+      resources: ["src/content/pinterest-injected.js"],
+      matches: [
+        "https://*.pinterest.com/*",
+        "https://*.pinterest.co.uk/*",
+        "https://*.pinterest.ca/*",
+        "https://*.pinterest.com.au/*",
+        "https://*.pinterest.de/*",
+        "https://*.pinterest.fr/*",
+        "https://*.pinterest.es/*",
+        "https://*.pinterest.it/*",
+        "https://*.pinterest.jp/*",
+        "https://*.pinterest.co.kr/*",
+        "https://*.pinterest.com.mx/*",
+        "https://*.pinterest.com.br/*",
+      ],
     },
   ],
 });

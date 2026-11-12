@@ -224,6 +224,7 @@ export const zhCN: Dict = {
   // ── platform names ─────────────────────────────────────────────────────
   'platform.bilibili': 'B站',
   'platform.douyin': '抖音',
+  'platform.pinterest': 'Pinterest',
   'platform.xhs': '小红书',
 
   // ── library: list ──────────────────────────────────────────────────────
@@ -243,7 +244,7 @@ export const zhCN: Dict = {
   'library.loadMore': '加载更多（还有 {count} 条）',
   'library.loadingMore': '加载中…',
   'library.moreAria': '更多素材库操作',
-  'library.onboardingDesc': '正常浏览小红书、B站、抖音，Chrome 插件「RemixClip 素材助手」会在后台被动采集；在插件里点「发送到 RemixClip」，封面、文案、互动数据和评论就会出现在这里。',
+  'library.onboardingDesc': '正常浏览小红书、B站、抖音、Pinterest，Chrome 插件「RemixClip 素材助手」会在后台被动采集；在插件里点「发送到 RemixClip」，封面、文案、互动数据和评论就会出现在这里。',
   'library.onboardingTitle': '把社媒素材，收进工作台',
   'library.readFailed': '读取素材失败',
   'library.removedNotice': '已从素材库移除',

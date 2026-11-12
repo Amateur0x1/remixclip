@@ -284,6 +284,7 @@ export interface Dict {
   // ── platform names ─────────────────────────────────────────────────────
   'platform.bilibili': string;
   'platform.douyin': string;
+  'platform.pinterest': string;
   'platform.xhs': string;
 
   // ── library: list ──────────────────────────────────────────────────────

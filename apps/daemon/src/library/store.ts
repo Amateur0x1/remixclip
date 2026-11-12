@@ -81,6 +81,11 @@ function int(value: unknown): number {
 }
 
 function timestamp(value: unknown): number | undefined {
+  // Pinterest exports ISO-8601 dates; everything else is epoch seconds or milliseconds.
+  if (typeof value === 'string' && value.trim()) {
+    const parsed = Date.parse(value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
   const n = int(value);
   if (n <= 0) return undefined;
   // Bilibili/Douyin APIs use seconds, Xiaohongshu uses milliseconds; values below
@@ -111,6 +116,7 @@ function inferPlatform(input: LibraryImportRequest, notes: unknown[]): SocialPla
   if (filename.includes('xiaohongshu') || filename.startsWith('xhs')) return 'xhs';
   if (filename.includes('bilibili') || filename.startsWith('bili')) return 'bilibili';
   if (filename.includes('douyin') || filename.startsWith('dy')) return 'douyin';
+  if (filename.includes('pinterest') || filename.startsWith('pin')) return 'pinterest';
   return null;
 }
 
@@ -118,6 +124,7 @@ const VIDEO_FRAME_HOST: Record<SocialPlatform, string> = {
   xhs: 'https://sns-img-bd.xhscdn.com/',
   bilibili: 'https://i0.hdslb.com/',
   douyin: 'https://p3-sign.douyinpic.com/',
+  pinterest: 'https://i.pinimg.com/',
 };
 
 function normalizeImages(note: UnknownRecord, platform: SocialPlatform): string[] {
@@ -548,7 +555,7 @@ export function listLibraryItems(
   const total = (db.prepare(`SELECT COUNT(*) AS count FROM library_items ${whereSql}`)
     .get(...params) as { count: number }).count;
 
-  const counts: LibraryCounts = { all: 0, xhs: 0, bilibili: 0, douyin: 0 };
+  const counts: LibraryCounts = { all: 0, xhs: 0, bilibili: 0, douyin: 0, pinterest: 0 };
   const countRows = db.prepare('SELECT platform, COUNT(*) AS count FROM library_items GROUP BY platform')
     .all() as { platform: SocialPlatform; count: number }[];
   for (const row of countRows) {
@@ -624,6 +631,9 @@ const MEDIA_HOST_ALLOWLIST = [
   'bytedance.com',
   'ixigua.com',
   'amemv.com',
+  // Pinterest serves every pin image/video from i.pinimg.com and its regional mirrors.
+  'pinimg.com',
+  'pinterest.com',
 ];
 
 export function isAllowedMediaHost(hostname: string): boolean {
@@ -646,5 +656,6 @@ export function mediaReferer(hostname: string): string {
   const host = hostname.toLowerCase();
   if (host.includes('xhscdn') || host.includes('xiaohongshu')) return 'https://www.xiaohongshu.com/';
   if (host.includes('hdslb') || host.includes('bilibili') || host.includes('bilivideo')) return 'https://www.bilibili.com/';
+  if (host.includes('pinimg') || host.includes('pinterest')) return 'https://www.pinterest.com/';
   return 'https://www.douyin.com/';
 }

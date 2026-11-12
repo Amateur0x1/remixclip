@@ -190,6 +190,7 @@ const PREFIXES: Record<PlatformKey, string> = {
   xhs: `${NAMESPACE}:xhs:`,
   bilibili: `${NAMESPACE}:bilibili:`,
   douyin: `${NAMESPACE}:douyin:`,
+  pinterest: `${NAMESPACE}:pinterest:`,
 };
 
 /** v1's single key, used only for migration */
@@ -197,6 +198,8 @@ const LEGACY_KEYS: Record<PlatformKey, string> = {
   xhs: "cheat_sniffer_data",
   bilibili: "cheat_sniffer_data_bili",
   douyin: "cheat_sniffer_data_dy",
+  // Pinterest was added after v2; the key exists so the migration map stays total.
+  pinterest: "cheat_sniffer_data_pin",
 };
 
 const NOTE_PREFIX = "note:";
@@ -427,6 +430,29 @@ export function parseDyPageContext(url: string): PageContext {
   }
 }
 
+/**
+ * Pinterest URL parsing. A pin page is the detail view; `/<username>/` and
+ * `/<username>/<board>/` are creator surfaces (the pin belongs to that creator); everything else
+ * (home feed, search, ideas) is explore.
+ */
+export function parsePinterestPageContext(url: string): PageContext {
+  try {
+    const u = new URL(url);
+    if (/^\/pin\/\d+/.test(u.pathname)) return { page: "note_detail" };
+    const first = u.pathname.split("/").filter(Boolean)[0];
+    const reserved = new Set([
+      "ideas", "search", "today", "explore", "discover", "pin", "settings",
+      "business", "notifications", "messages", "news", "shopping", "login", "resource",
+    ]);
+    if (first && !reserved.has(first)) {
+      return { page: "user", user_id: first };
+    }
+    return { page: "explore" };
+  } catch {
+    return { page: "explore" };
+  }
+}
+
 /** Single entry point: pick the parser by platform */
 export function parsePageContext(url: string, platform: PlatformKey = "xhs"): PageContext {
   switch (platform) {
@@ -436,6 +462,8 @@ export function parsePageContext(url: string, platform: PlatformKey = "xhs"): Pa
       return parseBiliPageContext(url);
     case "douyin":
       return parseDyPageContext(url);
+    case "pinterest":
+      return parsePinterestPageContext(url);
     default:
       return { page: "explore" };
   }

@@ -222,6 +222,7 @@ export const en: Dict = {
   // ── platform names ─────────────────────────────────────────────────────
   'platform.bilibili': 'Bilibili',
   'platform.douyin': 'Douyin',
+  'platform.pinterest': 'Pinterest',
   'platform.xhs': 'Xiaohongshu',
 
   // ── library: list ──────────────────────────────────────────────────────
@@ -241,7 +242,7 @@ export const en: Dict = {
   'library.loadMore': 'Load more ({count} left)',
   'library.loadingMore': 'Loading…',
   'library.moreAria': 'More library actions',
-  'library.onboardingDesc': 'Browse Xiaohongshu, Bilibili, and Douyin as usual — the RemixClip Chrome extension captures in the background. Click "Send to RemixClip" in the extension and covers, captions, engagement data, and comments show up here.',
+  'library.onboardingDesc': 'Browse Xiaohongshu, Bilibili, Douyin, or Pinterest as usual — the RemixClip Chrome extension captures in the background. Click "Send to RemixClip" in the extension and covers, captions, engagement data, and comments show up here.',
   'library.onboardingTitle': 'Bring social media material into your workspace',
   'library.readFailed': 'Failed to read the library',
   'library.removedNotice': 'Removed from the library',
