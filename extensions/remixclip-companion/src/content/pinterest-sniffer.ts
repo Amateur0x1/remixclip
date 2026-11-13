@@ -31,6 +31,9 @@ injectMainWorldScript();
 window.addEventListener("message", (event) => {
   if (event.source !== window) return;
   if (event.data?.type !== "PINTEREST_SNIFFER_DATA") return;
+  // Capture is opt-in by navigation: home / explore / search / boards must never reach the
+  // library, only `/pin/<id>/` pages the user clicked into.
+  if (!pinIdFromPath()) return;
 
   const { source, payload, url, pageUrl } = event.data;
 
