@@ -221,12 +221,24 @@ function readDomPin(): DomPin | null {
 
   if (!base.video) {
     const players = Array.from(document.querySelectorAll<HTMLVideoElement>('video'));
-    const player = players.find((candidate) => {
-      const src = candidate.currentSrc || candidate.src;
-      return isHttpUrl(src);
-    });
+    let player: HTMLVideoElement | undefined;
+    let src = '';
+    for (const candidate of players) {
+      // Pinterest plays HLS through MSE, so the element's own src is usually a blob: URL; the
+      // progressive file, when the pin still ships one, sits on a <source> child.
+      const sources = [
+        candidate.currentSrc || candidate.src,
+        ...Array.from(candidate.querySelectorAll('source')).map((node) => node.src),
+      ].filter((value) => isHttpUrl(value));
+      if (sources.length > 0) {
+        player = candidate;
+        src = sources[0];
+        break;
+      }
+      // Blob-only playback still exposes the poster frame, which beats an empty card.
+      if (base.images.length === 0 && isHttpUrl(candidate.poster)) base.images.push(candidate.poster);
+    }
     if (player) {
-      const src = player.currentSrc || player.src;
       base.video = {
         url: src,
         width: player.videoWidth || undefined,

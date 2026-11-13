@@ -1106,7 +1106,7 @@ function parsePinterestPin(raw: Record<string, unknown>, source: NoteEntry["sour
     ? raw.images.filter((url): url is string => isHttpUrl(url))
     : [];
 
-  const videoCandidates = (Array.isArray(raw.videos) ? raw.videos : [])
+  const capturedVideos = (Array.isArray(raw.videos) ? raw.videos : [])
     .map((item) => item as Record<string, unknown>)
     .map((item) => ({
       url: textValue(item.url, item.video_url),
@@ -1116,6 +1116,10 @@ function parsePinterestPin(raw: Record<string, unknown>, source: NoteEntry["sour
     }))
     .filter((item): item is { url: string; width: number; height: number; duration: number } => isHttpUrl(item.url))
     .sort((a, b) => (b.width * b.height) - (a.width * a.height));
+  // Pinterest lists the same clip as an HLS manifest and as an MP4. Only the MP4 can be
+  // downloaded and analysed, so keep the manifests as a fallback instead of the first pick.
+  const progressiveVideos = capturedVideos.filter((item) => /\.mp4(\?|$)/i.test(item.url));
+  const videoCandidates = progressiveVideos.length > 0 ? progressiveVideos : capturedVideos;
   const bestVideo = videoCandidates[0];
 
   const title = textValue(raw.title, raw.grid_title) ?? "";
