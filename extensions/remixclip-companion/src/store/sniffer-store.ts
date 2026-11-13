@@ -207,6 +207,25 @@ const COMMENT_PREFIX = "comment:";
 const META_KEY = "meta";
 const CARDS_KEY = "cards";
 
+/**
+ * The platform the panel should open on. Sniffed data is already split per platform, so a
+ * Pinterest capture used to land in storage the panel never showed: opening on the last
+ * captured platform makes the fresh data visible without the user hunting for the tab.
+ */
+export const LAST_PLATFORM_KEY = `${NAMESPACE}:last-platform`;
+
+export async function rememberPlatform(platform: PlatformKey): Promise<void> {
+  await chrome.storage.local.set({ [LAST_PLATFORM_KEY]: platform });
+}
+
+export async function loadRememberedPlatform(): Promise<PlatformKey | null> {
+  const stored = (await chrome.storage.local.get(LAST_PLATFORM_KEY)) as Record<string, unknown>;
+  const value = stored[LAST_PLATFORM_KEY];
+  return value === "xhs" || value === "bilibili" || value === "douyin" || value === "pinterest"
+    ? value
+    : null;
+}
+
 function metaKey(platform: PlatformKey): string {
   return PREFIXES[platform] + META_KEY;
 }

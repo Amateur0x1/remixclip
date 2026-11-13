@@ -5,6 +5,7 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import {
   loadData,
+  loadRememberedPlatform,
   type SnifferData,
   type NoteEntry,
   type NoteCard,
@@ -59,6 +60,20 @@ function App() {
   const [selectedUsers, setSelectedUsers] = useState<Set<string>>(new Set());
   /** Creator currently expanded in the user tab */
   const [expandedUser, setExpandedUser] = useState<string | null>(null);
+
+  // Open on the platform the browser was last capturing: each platform writes to its own storage
+  // slice, so defaulting to 小红书 made a Pinterest capture look like "什么都没嗅探到".
+  useEffect(() => {
+    let cancelled = false;
+    void loadRememberedPlatform()
+      .then((last) => {
+        if (!cancelled && last) setPlatform(last);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // ── RemixClip connection (port only) ──
   const [port, setPort] = useState<number | null>(null);

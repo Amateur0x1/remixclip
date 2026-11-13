@@ -37,6 +37,7 @@ import {
   loadData,
   saveChanges,
   clearData,
+  rememberPlatform,
   toInt,
   parsePageContext,
 } from "./store/sniffer-store";
@@ -231,6 +232,7 @@ async function handleSniffData(msg: SniffMessage): Promise<void> {
   if (Object.keys(change).length === 0) return; // no changes: no write and no panel refresh
 
   await saveChanges(platform, change);
+  await rememberPlatform(platform).catch(() => {});
 
   // Broadcast only after a successful write, so the panel never reads a half-written state
   notifyPanel(platform);

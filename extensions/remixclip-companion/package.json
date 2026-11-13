@@ -1,7 +1,7 @@
 {
   "name": "@remixclip/extension-companion",
   "private": true,
-  "version": "0.6.0",
+  "version": "0.6.1",
   "license": "Apache-2.0",
   "description": "RemixClip 素材助手 — 浏览器侧被动采集社媒内容（小红书/B站/抖音/Pinterest），推送到素材库",
   "type": "module",
