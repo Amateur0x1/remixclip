@@ -1036,15 +1036,22 @@ function mergeDyUserProfile(data: SnifferData, raw: Record<string, unknown>, ctx
 // ═══════════════════════════════════════════
 
 /**
- * Pinterest has only three capture surfaces we care about:
- * - `pin_detail` / `pinterest_dom`: one pin (resource response or page fallback)
- * - `pin_feed`: many pins from a home/search/board response
- * - `pin_comment`: comments of the pin currently open
+ * Pinterest capture is detail-only: the injected and content scripts forward nothing unless the
+ * tab sits on `/pin/<id>/`, so:
+ * - `pin_detail` / `pinterest_dom`: the pin the user opened (resource response or page fallback)
+ * - `pin_feed`: the same pin when it arrives inside a larger response (related pins are dropped)
+ * - `pin_comment`: comments of that same pin
  *
- * The injected script already trims each pin to the shape below, but every field is read
- * defensively: Pinterest changes its resource envelopes often, and an older/newer page shape must
- * never lose the whole capture.
+ * Every field is read defensively: Pinterest changes its resource envelopes often, and an
+ * older/newer page shape must never lose the whole capture.
  */
+
+/** The pin the user opened, from the page URL (`/pin/<id>/`); null on every other Pinterest page. */
+function pinterestOpenPinId(url: string | undefined): string | null {
+  const match = /\/pin\/(\d+)/.exec(url ?? "");
+  return match?.[1] ?? null;
+}
+
 function handlePinterest(
   data: SnifferData,
   msg: SniffMessage,
@@ -1052,18 +1059,23 @@ function handlePinterest(
   ctx: PageContext,
   tx: Tx
 ): void {
+  // Capture is opt-in by navigation: feed / explore / search payloads are dropped even if a
+  // stale content script still forwards them, so the library only holds pins the user opened.
+  const openPinId = pinterestOpenPinId(msg.pageUrl);
+  if (!openPinId) return;
+
   switch (msg.source) {
     case "pin_detail":
     case "pinterest_dom":
       mergePinterestPin(data, payload, ctx, tx, "note_detail");
       break;
     case "pin_feed": {
+      // Detail-page responses also carry related pins; keep the opened one only.
       const pins = Array.isArray(payload.pins) ? payload.pins : [];
-      const source = ctx.page === "user" ? "user" as const
-        : ctx.page === "note_detail" ? "note_detail" as const
-        : "explore" as const;
       for (const item of pins) {
-        mergePinterestPin(data, item as Record<string, unknown>, ctx, tx, source);
+        const raw = item as Record<string, unknown>;
+        if (String(raw.id ?? raw.pin_id ?? "") !== openPinId) continue;
+        mergePinterestPin(data, raw, ctx, tx, "note_detail");
       }
       break;
     }

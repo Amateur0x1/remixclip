@@ -287,7 +287,15 @@
 
   var contextUrl = window.location.href;
 
+  /** The pin the user actually opened (`/pin/<id>/`); null on home, explore, search and boards. */
+  function openPinId() {
+    var match = /\/pin\/(\d+)/.exec(window.location.pathname);
+    return match ? match[1] : null;
+  }
+
   function forward(source, payload, apiUrl) {
+    // Capture is opt-in by navigation: nothing leaves the page unless the user is on a pin.
+    if (!openPinId()) return;
     window.postMessage(
       { type: MESSAGE_TYPE, source: source, payload: payload, url: apiUrl, pageUrl: contextUrl },
       "*"
@@ -305,13 +313,18 @@
   function handleResponse(url, json) {
     if (!json || typeof json !== "object") return;
 
+    // Only the pin the user clicked into is capture-worthy. Feed and explore payloads carry
+    // dozens of pins each and used to be merged as "explore" entries, which flooded the library
+    // with content nobody opened.
+    var pinId = openPinId();
+    if (!pinId) return;
+
     if (url.indexOf("PinCommentResource") >= 0) {
       var comments = [];
       collectComments(json, comments, 0);
       if (comments.length > 0) {
-        var openPinId = (/\/pin\/(\d+)/.exec(contextUrl) || [])[1] || "";
         console.log("[RemixClip] Pinterest 评论拦截:", comments.length, "条");
-        forward("pin_comment", { pin_id: openPinId, comments: comments }, url);
+        forward("pin_comment", { pin_id: pinId, comments: comments }, url);
       }
       return;
     }
@@ -319,16 +332,15 @@
     var pins = [];
     collectPins(json, pins, 0);
     pins = dedupePins(pins);
-    if (pins.length === 0) return;
 
-    if (pins.length === 1 && /\/pin\/\d+/.test(contextUrl)) {
-      console.log("[RemixClip] Pinterest 图钉详情拦截:", pins[0].id);
-      forward("pin_detail", pins[0], url);
-      return;
+    // The same response often also carries "related pins"; keep the opened one only.
+    for (var i = 0; i < pins.length; i += 1) {
+      if (String(pins[i].id) === pinId) {
+        console.log("[RemixClip] Pinterest 图钉详情拦截:", pinId);
+        forward("pin_detail", pins[i], url);
+        return;
+      }
     }
-
-    console.log("[RemixClip] Pinterest 列表拦截:", pins.length, "条");
-    forward("pin_feed", { pins: pins }, url);
   }
 
   function matchPinterestApi(url) {
