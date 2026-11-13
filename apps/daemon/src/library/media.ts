@@ -67,6 +67,26 @@ function upstreamErrorMessage(host: string, status: number): string {
   return `视频源返回 HTTP ${status}（${host}）`;
 }
 
+/**
+ * Pinterest serves every still from a handful of interchangeable mirrors. `i.pinimg.com` is the
+ * one DNS-poisoned networks drop first; the same path answers from the edge hosts, so the proxy
+ * and the downloader retry there instead of surfacing an empty card / failed video.
+ */
+const PINIMG_MIRRORS = ['i1-e.pinimg.com', 'i2.pinimg.com'];
+
+/** Ordered fetch candidates for one media URL: the URL itself first, then known mirrors. */
+export function mediaUrlCandidates(target: URL): URL[] {
+  const candidates = [target];
+  if (target.hostname.toLowerCase() === 'i.pinimg.com') {
+    for (const mirror of PINIMG_MIRRORS) {
+      const next = new URL(target.toString());
+      next.hostname = mirror;
+      candidates.push(next);
+    }
+  }
+  return candidates;
+}
+
 let layout: MediaLayout | null = null;
 
 /**
@@ -367,6 +387,26 @@ async function downloadOnce(task: DownloadTask, onProgress: (ratio: number) => v
   const target = new URL(task.url);
   if (!isAllowedMediaHost(target.hostname)) throw new Error(`不支持的视频域名：${target.hostname}`);
 
+  // The first candidate is the captured URL; the rest are CDN mirrors that serve the same
+  // object when the capture host itself is unreachable.
+  let lastError: unknown = null;
+  for (const candidate of mediaUrlCandidates(target)) {
+    if (!isAllowedMediaHost(candidate.hostname)) continue;
+    try {
+      return await downloadFromUrl(candidate, task, onProgress);
+    } catch (error) {
+      lastError = error;
+      rmSync(`${task.dest}.part`, { force: true });
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error('下载失败');
+}
+
+async function downloadFromUrl(
+  target: URL,
+  task: DownloadTask,
+  onProgress: (ratio: number) => void,
+): Promise<number> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), DOWNLOAD_TIMEOUT_MS);
   const partPath = `${task.dest}.part`;

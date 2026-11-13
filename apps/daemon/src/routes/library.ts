@@ -53,6 +53,7 @@ import {
   listDownloadEntries,
   listMediaFiles,
   mediaLayout,
+  mediaUrlCandidates,
   registerLocalMedia,
   safeSegment,
 } from '../library/media.js';
@@ -62,6 +63,45 @@ import { getComparison, listComparisons, startComparison } from '../library/comp
 const MAX_IMAGE_CACHE_BYTES = 25 * 1024 * 1024;
 /** Upload limit for replica clips: kept consistent with original video downloads. */
 const MAX_UPLOAD_BYTES = 500 * 1024 * 1024;
+const MEDIA_PROXY_TIMEOUT_MS = 20_000;
+
+/**
+ * Fetch the first candidate that answers. Pinterest's `i.pinimg.com` is the host a poisoned DNS
+ * drops first while its edge mirrors still serve the same object, so fail over instead of
+ * surfacing a bare 502 for every cover. Only transport errors and 5xx move on to the next
+ * candidate: a 403/404 is the same answer everywhere.
+ */
+type FetchResponse = Awaited<ReturnType<typeof fetch>>;
+
+async function fetchMediaUpstream(
+  candidates: URL[],
+  headersFor: (url: URL) => Record<string, string>,
+  pending: Set<AbortController>,
+): Promise<FetchResponse> {
+  let lastError: unknown = null;
+  for (const candidate of candidates) {
+    const controller = new AbortController();
+    // The winner stays registered: a client that closes mid-stream must still abort the body.
+    pending.add(controller);
+    const timeout = setTimeout(() => controller.abort(), MEDIA_PROXY_TIMEOUT_MS);
+    try {
+      const response = await fetch(candidate, {
+        headers: headersFor(candidate),
+        redirect: 'follow',
+        signal: controller.signal,
+      });
+      clearTimeout(timeout);
+      if (response.ok || response.status < 500) return response;
+      pending.delete(controller);
+      lastError = new Error(`媒体源返回 ${response.status}`);
+    } catch (error) {
+      clearTimeout(timeout);
+      pending.delete(controller);
+      lastError = error;
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error('媒体拉取失败');
+}
 
 function endpointFor(req: Request): string {
   const port = req.socket.localPort ?? 7456;
@@ -456,21 +496,25 @@ if ((meta.size ?? 0) <= MAX_IMAGE_CACHE_BYTES) {
       }
     }
 
-const controller = new AbortController();
-const timeout = setTimeout(() => controller.abort(), 20_000);
-res.on('close', () => {
-  // A normal response also emits 'close'; only an early disconnect should cancel the upstream.
-  if (!res.writableEnded) controller.abort();
-});
+    const pending = new Set<AbortController>();
+    res.on('close', () => {
+      // A normal response also emits 'close'; only an early disconnect should cancel the upstream.
+      if (!res.writableEnded) for (const controller of pending) controller.abort();
+    });
     try {
-      const headers: Record<string, string> = {
-        Referer: mediaReferer(target.hostname),
-        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0 Safari/537.36',
-        Accept: 'image/avif,image/webp,image/png,image/*,video/*,*/*;q=0.8',
-      };
-      if (range) headers.Range = range;
-      const upstream = await fetch(target, { headers, redirect: 'follow', signal: controller.signal });
-      clearTimeout(timeout);
+      const upstream = await fetchMediaUpstream(
+        mediaUrlCandidates(target),
+        (candidate) => {
+          const headers: Record<string, string> = {
+            Referer: mediaReferer(candidate.hostname),
+            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0 Safari/537.36',
+            Accept: 'image/avif,image/webp,image/png,image/*,video/*,*/*;q=0.8',
+          };
+          if (range) headers.Range = range;
+          return headers;
+        },
+        pending,
+      );
 
       const finalUrl = new URL(upstream.url || target.toString());
       if (!isAllowedMediaHost(finalUrl.hostname)) {
@@ -515,7 +559,6 @@ res.on('close', () => {
       res,
     );
   } catch (error) {
-    clearTimeout(timeout);
     // The client is already gone: nothing left to answer, and the stream is destroyed.
     if (res.destroyed || res.writableEnded) return;
     if (!res.headersSent) {
