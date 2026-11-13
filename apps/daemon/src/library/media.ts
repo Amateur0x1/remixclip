@@ -6,13 +6,24 @@
  *   replace all live here, while the HTTP layer only triggers and queries.
  */
 import type Database from 'better-sqlite3';
-import { createWriteStream, existsSync, mkdirSync, realpathSync, renameSync, rmSync, statSync } from 'node:fs';
+import {
+  closeSync,
+  createWriteStream,
+  existsSync,
+  mkdirSync,
+  openSync,
+  readSync,
+  realpathSync,
+  renameSync,
+  rmSync,
+  statSync,
+} from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { Readable, Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import path from 'node:path';
 import type { LibraryDownloadEntry, LibraryItem, MediaFile, MediaFileKind, MediaFileStatus } from '@remixclip/contracts';
-import { probeVideo } from './ffmpeg.js';
+import { probeVideo, runFfmpeg } from './ffmpeg.js';
 import { isAllowedMediaHost, mediaReferer } from './store.js';
 
 export interface MediaLayout {
@@ -407,6 +418,9 @@ async function downloadFromUrl(
   task: DownloadTask,
   onProgress: (ratio: number) => void,
 ): Promise<number> {
+  // A Pinterest video pin is an `.m3u8`: copying it only saves the playlist under an .mp4 name.
+  if (isHlsUrl(target)) return remuxHls(target, task, onProgress);
+
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), DOWNLOAD_TIMEOUT_MS);
   const partPath = `${task.dest}.part`;
@@ -416,6 +430,11 @@ async function downloadFromUrl(
       response = await requestVideo(target, controller.signal, true);
     }
     if (!response.ok) throw new Error(upstreamErrorMessage(target.hostname, response.status));
+    // Some CDNs serve a playlist from an opaque URL: the content type is the only hint left.
+    if ((response.headers.get('content-type') ?? '').toLowerCase().includes('mpegurl')) {
+      await response.body?.cancel().catch(() => {});
+      return remuxHls(target, task, onProgress);
+    }
     // Redirects are followed above, so re-check the host that actually serves the bytes: the
     // allowlist is an SSRF guard and must cover the final hop too.
     const finalUrl = response.url ? new URL(response.url) : target;
@@ -443,6 +462,11 @@ async function downloadFromUrl(
       createWriteStream(partPath),
     );
     renameSync(partPath, task.dest);
+    // Last line of defence: a body that starts with #EXTM3U is a playlist whatever the URL said.
+    if (readHead(task.dest) === '#EXTM3U') {
+      rmSync(task.dest, { force: true });
+      return remuxHls(target, task, onProgress);
+    }
     return received;
   } catch (error) {
     rmSync(partPath, { force: true });
@@ -450,6 +474,68 @@ async function downloadFromUrl(
     throw error;
   } finally {
     clearTimeout(timeout);
+  }
+}
+
+/** First bytes of a file, enough to recognise an HLS playlist (`#EXTM3U`). */
+function readHead(file: string, length = 7): string {
+  let fd: number | null = null;
+  try {
+    fd = openSync(file, 'r');
+    const buffer = Buffer.alloc(length);
+    const read = readSync(fd, buffer, 0, length, 0);
+    return buffer.subarray(0, read).toString('utf8');
+  } catch {
+    return '';
+  } finally {
+    if (fd !== null) closeSync(fd);
+  }
+}
+
+/** Pinterest hands out `.m3u8` for video pins; that URL is a playlist, not a file. */
+function isHlsUrl(target: URL): boolean {
+  return /\.m3u8$/i.test(target.pathname);
+}
+
+/**
+ * An HLS URL cannot be saved as-is: 800-odd bytes of `#EXTM3U` with a `.mp4` name is what made a
+ * downloaded pin look ready but unreadable. Let ffmpeg pull the playlist and mux the segments
+ * (video + separate audio rendition) into a real mp4.
+ */
+async function remuxHls(
+  target: URL,
+  task: DownloadTask,
+  onProgress: (ratio: number) => void,
+): Promise<number> {
+  const referer = mediaReferer(target.hostname);
+  const partPath = `${task.dest}.part`;
+  onProgress(0.05);
+  try {
+    await runFfmpeg(
+      [
+        '-hide_banner',
+        '-loglevel', 'error',
+        '-nostdin',
+        '-y',
+        '-headers', `Referer: ${referer}\r\nOrigin: ${new URL(referer).origin}\r\nUser-Agent: ${USER_AGENT}\r\n`,
+        '-i', target.toString(),
+        '-c', 'copy',
+        '-bsf:a', 'aac_adtstoasc',
+        '-movflags', '+faststart',
+        '-f', 'mp4',
+        partPath,
+      ],
+      { timeoutMs: DOWNLOAD_TIMEOUT_MS },
+    );
+    const size = statSync(partPath).size;
+    if (size <= 0) throw new Error('转封装后没有产出视频');
+    if (size > MAX_DOWNLOAD_BYTES) throw new Error('视频超过 500MB 上限，已放弃下载');
+    renameSync(partPath, task.dest);
+    onProgress(0.95);
+    return size;
+  } catch (error) {
+    rmSync(partPath, { force: true });
+    throw new Error(`HLS 转封装失败：${error instanceof Error ? error.message : String(error)}`);
   }
 }
 
@@ -494,9 +580,31 @@ async function runDownloadTask(task: DownloadTask): Promise<void> {
       fps: meta.fps ?? null,
     });
   } catch (error) {
-    // A probe failure does not affect the file on disk: keep ready, leave metadata empty
-    // and let the frontend degrade.
-    console.warn(`[remixclip] ffprobe 探测失败 ${task.dest}: ${error instanceof Error ? error.message : String(error)}`);
+    // A playlist that slipped through must not stay "ready": the agent would try to analyse
+    // 832 bytes of text as a video and report a broken reference instead of a broken source.
+    if (readHead(task.dest) === '#EXTM3U') {
+      rmSync(task.dest, { force: true });
+      patchMedia(db, task.mediaId, {
+        status: 'failed',
+        progress: 0,
+        bytes: 0,
+        error: '视频源返回的是 HLS 播放列表（m3u8），不是可播放文件；请重新采集这条内容',
+      });
+      return;
+    }
+    // A source video that ffprobe cannot open is not usable by the agent, and a "ready" row would
+    // block the download button from ever retrying it. Mark it failed so the row is replaced on
+    // the next download instead of being fed to shot analysis as if it were a video.
+    const reason = error instanceof Error ? error.message : String(error);
+    console.warn(`[remixclip] ffprobe 探测失败 ${task.dest}: ${reason}`);
+    // Leave nothing unreadable behind: the retry writes a fresh file anyway.
+    rmSync(task.dest, { force: true });
+    patchMedia(db, task.mediaId, {
+      status: 'failed',
+      progress: 0,
+      bytes: 0,
+      error: `视频已下载但无法解析（${reason}）`,
+    });
   }
 }
 
