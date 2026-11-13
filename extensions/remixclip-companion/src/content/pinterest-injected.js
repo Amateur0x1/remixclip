@@ -120,6 +120,14 @@
         duration: toInt(item.duration),
       });
     }
+    // A pin can expose the same clip as a progressive MP4 and as an HLS manifest (`V_HLSV4`).
+    // Only the MP4 is a file the library can download and analyse, so drop the manifests when a
+    // real file exists instead of letting the area sort pick either one at random.
+    var progressive = items.filter(function (item) {
+      return /\.mp4(\?|$)/i.test(item.url);
+    });
+    if (progressive.length > 0) items = progressive;
+
     items.sort(function (a, b) {
       return (b.width || 0) * (b.height || 0) - (a.width || 0) * (a.height || 0);
     });
