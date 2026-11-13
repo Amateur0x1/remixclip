@@ -36,6 +36,17 @@
     return 0;
   }
 
+  /**
+   * Pinterest reports clip length in milliseconds (its own player works in ms), while the panel
+   * and the library contract store seconds. Treating 13033 as seconds rendered a 13-second pin as
+   * "217:13", so normalise here: pins are capped well under 1000 seconds.
+   */
+  function toSeconds(value) {
+    var n = toInt(value);
+    if (n <= 0) return 0;
+    return n >= 1000 ? Math.round(n / 1000) : n;
+  }
+
   function firstString() {
     for (var i = 0; i < arguments.length; i += 1) {
       var value = arguments[i];
@@ -117,7 +128,7 @@
         url: url,
         width: toInt(item.width),
         height: toInt(item.height),
-        duration: toInt(item.duration),
+        duration: toSeconds(item.duration),
       });
     }
     items.sort(function (a, b) {
