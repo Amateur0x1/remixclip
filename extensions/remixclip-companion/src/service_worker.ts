@@ -37,6 +37,7 @@ import {
   loadData,
   saveChanges,
   clearData,
+  loadOpenPin,
   rememberOpenPin,
   removeNotes,
   toInt,
@@ -235,13 +236,18 @@ async function handleSniffData(msg: SniffMessage): Promise<void> {
 
   const change = tx.toChange(data);
 
-  // The panel mirrors the pin the user is on, even when this payload adds nothing new.
+  // The panel mirrors the pin the user is on, even when this payload adds nothing new:
+  // an already-captured pin must still update the panel when the user moves between posts.
+  let pinMoved = false;
   if (platform === "pinterest") {
     const pinId = pinterestOpenPinId(msg.pageUrl);
-    if (pinId) await rememberOpenPin(pinId);
+    if (pinId && pinId !== (await loadOpenPin())) {
+      await rememberOpenPin(pinId);
+      pinMoved = true;
+    }
   }
 
-  if (Object.keys(change).length === 0) return; // no changes: no write and no panel refresh
+  if (Object.keys(change).length === 0 && !pinMoved) return; // no changes: no write and no panel refresh
 
   await saveChanges(platform, change);
 
