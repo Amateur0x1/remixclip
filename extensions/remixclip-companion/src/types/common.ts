@@ -5,7 +5,14 @@
 
 // ── Platform identifiers ──
 
-export type PlatformKey = "xhs" | "bilibili" | "douyin" | "pinterest";
+export type PlatformKey =
+  | "xhs"
+  | "bilibili"
+  | "douyin"
+  | "pinterest"
+  | "youtube"
+  | "twitter"
+  | "instagram";
 
 // ── Sniff sources ──
 
@@ -34,7 +41,12 @@ export type SniffSource =
   | "pin_feed"
   | "pin_comment"
   // DOM fallback for pin pages whose API responses were not observable
-  | "pinterest_dom";
+  | "pinterest_dom"
+  // YouTube / X / Instagram: detail-page capture (embedded player data + DOM)
+  | "yt_watch"
+  | "yt_dom"
+  | "tw_status"
+  | "ig_post";
 
 // ── Content Script → Service Worker shared message ──
 

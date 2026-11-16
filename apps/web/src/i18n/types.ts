@@ -300,6 +300,9 @@ export interface Dict {
   'platform.bilibili': string;
   'platform.douyin': string;
   'platform.pinterest': string;
+  'platform.youtube': string;
+  'platform.twitter': string;
+  'platform.instagram': string;
   'platform.xhs': string;
 
   // ── library: list ──────────────────────────────────────────────────────

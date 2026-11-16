@@ -20,6 +20,8 @@ export interface SocialPlatformDefinition {
   readonly hosts: readonly string[];
   /** Path patterns whose first capture group is the post id. */
   readonly postPatterns: readonly RegExp[];
+  /** Platforms that put the id in a query parameter (YouTube `watch?v=`) read it here. */
+  postIdFromUrl?(url: URL): string | null;
   /** Metrics this platform actually surfaces, in the order the detail view should show them. */
   readonly metrics: readonly SocialMetricKey[];
   /** Canonical post URL, or null when the id cannot produce one. */
@@ -83,6 +85,27 @@ export const SOCIAL_PLATFORM_SCHEMAS: Record<SocialPlatform, SocialPlatformDefin
     metrics: ['collects', 'comments'],
     buildLink: (remoteId) => `https://www.pinterest.com/pin/${encodeURIComponent(remoteId)}/`,
   },
+  youtube: {
+    hosts: ['youtube.com', 'youtu.be'],
+    // The id of a normal video lives in `?v=`; shorts put it in the path.
+    postPatterns: [/^\/shorts\/([\w-]+)/],
+    postIdFromUrl: (url) => (url.pathname === '/watch' ? url.searchParams.get('v') : null),
+    metrics: ['likes', 'comments'],
+    buildLink: (remoteId) => `https://www.youtube.com/watch?v=${encodeURIComponent(remoteId)}`,
+  },
+  twitter: {
+    hosts: ['x.com', 'twitter.com'],
+    postPatterns: [/^\/[^/]+\/status\/(\d+)/],
+    // X shows 点赞 / 评论 / 转发 / 收藏.
+    metrics: ['likes', 'comments', 'shares', 'collects'],
+    buildLink: (remoteId) => `https://x.com/i/status/${encodeURIComponent(remoteId)}`,
+  },
+  instagram: {
+    hosts: ['instagram.com'],
+    postPatterns: [/^\/(?:p|reel|tv)\/([\w-]+)/],
+    metrics: ['likes', 'comments'],
+    buildLink: (remoteId) => `https://www.instagram.com/p/${encodeURIComponent(remoteId)}/`,
+  },
 };
 
 export interface SocialLink {
@@ -111,6 +134,14 @@ export function parseSocialLink(raw: string | null | undefined): SocialLink | nu
     const definition = SOCIAL_PLATFORM_SCHEMAS[platform];
     const onHost = definition.hosts.some((item) => host === item || host.endsWith(`.${item}`));
     if (!onHost) continue;
+    const queryId = definition.postIdFromUrl?.(url) ?? null;
+    if (queryId) {
+      return {
+        platform,
+        remoteId: queryId,
+        canonicalUrl: definition.buildLink(queryId) ?? url.toString(),
+      };
+    }
     for (const pattern of definition.postPatterns) {
       const match = url.pathname.match(pattern);
       const remoteId = match?.[1];

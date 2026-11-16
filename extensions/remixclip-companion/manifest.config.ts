@@ -11,7 +11,8 @@ export default defineManifest({
   short_name: "RemixClip",
   // Version is maintained only in package.json, so two hand-written copies cannot drift
   version: pkg.version,
-  description: "被动采集小红书、B站、抖音、Pinterest 的内容，一键推送到 RemixClip 素材库。",
+  description:
+    "被动采集小红书、B站、抖音、Pinterest、YouTube、X、Instagram 的内容，一键推送到 RemixClip 素材库。",
   icons: {
     "16": "public/icon16.png",
     "48": "public/icon48.png",
@@ -79,6 +80,24 @@ export default defineManifest({
       ],
       run_at: "document_start",
     },
+    // YouTube: only watch pages and shorts carry a video; the feed has nothing to capture.
+    {
+      js: ["src/content/yt-sniffer.ts"],
+      matches: ["https://www.youtube.com/*", "https://m.youtube.com/*"],
+      run_at: "document_start",
+    },
+    // X / Twitter
+    {
+      js: ["src/content/tw-sniffer.ts"],
+      matches: ["https://x.com/*", "https://twitter.com/*"],
+      run_at: "document_start",
+    },
+    // Instagram
+    {
+      js: ["src/content/ig-sniffer.ts"],
+      matches: ["https://www.instagram.com/*"],
+      run_at: "document_start",
+    },
   ],
   web_accessible_resources: [
     {
@@ -96,6 +115,10 @@ export default defineManifest({
     {
       resources: ["src/content/dy-injected.js"],
       matches: ["https://www.douyin.com/*"],
+    },
+    {
+      resources: ["src/content/yt-injected.js"],
+      matches: ["https://www.youtube.com/*", "https://m.youtube.com/*"],
     },
     {
       resources: ["src/content/pinterest-injected.js"],

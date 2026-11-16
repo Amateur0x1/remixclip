@@ -274,6 +274,9 @@ export const PLATFORM_META: Record<SocialPlatform, { labelKey: DictKey; color: s
   bilibili: { labelKey: 'platform.bilibili', color: '#00aeec' },
   douyin: { labelKey: 'platform.douyin', color: '#161823' },
   pinterest: { labelKey: 'platform.pinterest', color: '#e60023' },
+  youtube: { labelKey: 'platform.youtube', color: '#ff0033' },
+  twitter: { labelKey: 'platform.twitter', color: '#0f1419' },
+  instagram: { labelKey: 'platform.instagram', color: '#e1306c' },
 };
 
 export function platformMeta(platform: SocialPlatform) {

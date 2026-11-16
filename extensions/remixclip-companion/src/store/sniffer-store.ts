@@ -191,7 +191,12 @@ const PREFIXES: Record<PlatformKey, string> = {
   bilibili: `${NAMESPACE}:bilibili:`,
   douyin: `${NAMESPACE}:douyin:`,
   pinterest: `${NAMESPACE}:pinterest:`,
+  youtube: `${NAMESPACE}:youtube:`,
+  twitter: `${NAMESPACE}:twitter:`,
+  instagram: `${NAMESPACE}:instagram:`,
 };
+
+const PLATFORM_KEYS = Object.keys(PREFIXES) as PlatformKey[];
 
 /** v1's single key, used only for migration */
 const LEGACY_KEYS: Record<PlatformKey, string> = {
@@ -200,6 +205,10 @@ const LEGACY_KEYS: Record<PlatformKey, string> = {
   douyin: "cheat_sniffer_data_dy",
   // Pinterest was added after v2; the key exists so the migration map stays total.
   pinterest: "cheat_sniffer_data_pin",
+  // YouTube / X / Instagram never had a v1 build; the placeholders keep the map total.
+  youtube: "cheat_sniffer_data_yt",
+  twitter: "cheat_sniffer_data_tw",
+  instagram: "cheat_sniffer_data_ig",
 };
 
 const NOTE_PREFIX = "note:";
@@ -236,8 +245,8 @@ export async function rememberPlatform(platform: PlatformKey): Promise<void> {
 export async function loadRememberedPlatform(): Promise<PlatformKey | null> {
   const stored = (await chrome.storage.local.get(LAST_PLATFORM_KEY)) as Record<string, unknown>;
   const value = stored[LAST_PLATFORM_KEY];
-  return value === "xhs" || value === "bilibili" || value === "douyin" || value === "pinterest"
-    ? value
+  return typeof value === "string" && (PLATFORM_KEYS as string[]).includes(value)
+    ? (value as PlatformKey)
     : null;
 }
 
