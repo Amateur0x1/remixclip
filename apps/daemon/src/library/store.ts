@@ -214,7 +214,11 @@ function normalizeNoteItem(
   const rawVideoUrl = text(video?.video_url) || text(video?.videoUrl) || text(video?.play_url)
     || text(note.video_url) || text(note.videoUrl);
   const videoUrl = absoluteUrl(rawVideoUrl);
-  const duration = int(video?.duration ?? note.duration) || undefined;
+  const rawDuration = int(video?.duration ?? note.duration);
+  // Pinterest reports milliseconds; this column (like every other platform) is seconds.
+  const duration =
+    (platform === 'pinterest' && rawDuration >= 1000 ? Math.round(rawDuration / 1000) : rawDuration) ||
+    undefined;
   const normalizedComments = normalizeComments(comments);
   const now = Date.now();
 
@@ -407,8 +411,17 @@ interface LibraryRow {
   payload: string;
 }
 
+/**
+ * Pinterest used to send clip length in milliseconds while every other platform (and this
+ * contract) stores seconds, so a 13-second pin rendered as "217:13". Normalise on read: rows
+ * written before the capture fix display correctly without a destructive schema migration.
+ */
 function parseItem(raw: string): LibraryItem {
-  return JSON.parse(raw) as LibraryItem;
+  const item = JSON.parse(raw) as LibraryItem;
+  if (item.platform === 'pinterest' && typeof item.duration === 'number' && item.duration >= 1000) {
+    return { ...item, duration: Math.round(item.duration / 1000) };
+  }
+  return item;
 }
 
 function toSummary(item: LibraryItem): LibraryItemSummary {

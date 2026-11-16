@@ -31,6 +31,9 @@ injectMainWorldScript();
 window.addEventListener("message", (event) => {
   if (event.source !== window) return;
   if (event.data?.type !== "PINTEREST_SNIFFER_DATA") return;
+  // Capture is opt-in by navigation: home / explore / search / boards must never reach the
+  // library, only `/pin/<id>/` pages the user clicked into.
+  if (!pinIdFromPath()) return;
 
   const { source, payload, url, pageUrl } = event.data;
 
@@ -81,6 +84,21 @@ function metaContent(property: string): string {
 
 function isHttpUrl(value: unknown): value is string {
   return typeof value === 'string' && /^https?:\/\//i.test(value);
+}
+
+/**
+ * `s.pinimg.com/images/facebook_share_image.png` is Pinterest's own share card, not pin artwork.
+ * A pin page that has not hydrated yet ships it in og:image; treating it as the pin preview made
+ * a note titled "Pinterest" with nothing to play, which the library could only report as 获取失败.
+ */
+function isGenericShareImage(url: string): boolean {
+  return /^https?:\/\/s\.pinimg\.com\/images\//i.test(url);
+}
+
+/** Real pin artwork lives on the i*.pinimg.com CDN under a size bucket or `originals/`. */
+function isPinImage(url: string): boolean {
+  if (!isHttpUrl(url) || isGenericShareImage(url)) return false;
+  return /^https?:\/\/(?:[a-z0-9-]+\.)*pinimg\.com\//i.test(url) && /\/(?:\d+x|originals)\//i.test(url);
 }
 
 function jsonLdNodes(): Record<string, unknown>[] {
@@ -214,19 +232,31 @@ function readDomPin(): DomPin | null {
   };
 
   const ogImage = metaContent('og:image');
-  if (isHttpUrl(ogImage) && !base.images.includes(ogImage)) base.images.push(ogImage);
+  if (isPinImage(ogImage) && !base.images.includes(ogImage)) base.images.push(ogImage);
 
   if (!base.title) base.title = metaContent('og:title') || document.title.replace(/\s*\|.*$/, '').trim();
   if (!base.description) base.description = metaContent('og:description');
 
   if (!base.video) {
     const players = Array.from(document.querySelectorAll<HTMLVideoElement>('video'));
-    const player = players.find((candidate) => {
-      const src = candidate.currentSrc || candidate.src;
-      return isHttpUrl(src);
-    });
+    let player: HTMLVideoElement | undefined;
+    let src = '';
+    for (const candidate of players) {
+      // Pinterest plays HLS through MSE, so the element's own src is usually a blob: URL; the
+      // progressive file, when the pin still ships one, sits on a <source> child.
+      const sources = [
+        candidate.currentSrc || candidate.src,
+        ...Array.from(candidate.querySelectorAll('source')).map((node) => node.src),
+      ].filter((value) => isHttpUrl(value));
+      if (sources.length > 0) {
+        player = candidate;
+        src = sources[0];
+        break;
+      }
+      // Blob-only playback still exposes the poster frame, which beats an empty card.
+      if (base.images.length === 0 && isHttpUrl(candidate.poster)) base.images.push(candidate.poster);
+    }
     if (player) {
-      const src = player.currentSrc || player.src;
       base.video = {
         url: src,
         width: player.videoWidth || undefined,
@@ -239,8 +269,10 @@ function readDomPin(): DomPin | null {
     }
   }
 
-  // No media at all means the page has not painted the pin yet; a retry will pick it up.
+  // No pin-specific media means the page has not painted the pin yet; a retry will pick it up.
+  // Returning the site-wide meta instead is what produced "Pinterest / 未知作者" junk notes.
   if (base.images.length === 0 && !base.video) return null;
+  if (/^pinterest$/i.test(base.title.trim()) && !base.authorUsername) return null;
   return base;
 }
 
