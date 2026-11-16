@@ -168,7 +168,7 @@ export function LibraryItemCard({
             {isVideo && (
               <span className="inline-flex items-center gap-0.5 rounded-full bg-black/50 px-1.5 py-0.5 text-[10px] font-medium text-white backdrop-blur-sm">
                 <Play className="size-2.5 fill-current" aria-hidden="true" />
-                {item.duration ? `${Math.floor(item.duration / 60)}:${String(item.duration % 60).padStart(2, '0')}` : translate('library.video')}
+                {item.duration ? formatDuration(item.duration * 1000) : translate('library.video')}
               </span>
             )}
             {item.kind === 'card' && (

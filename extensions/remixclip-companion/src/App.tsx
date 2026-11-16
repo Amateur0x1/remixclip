@@ -5,6 +5,8 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import {
   loadData,
+  loadOpenPin,
+  loadRememberedPlatform,
   type SnifferData,
   type NoteEntry,
   type NoteCard,
@@ -59,6 +61,26 @@ function App() {
   const [selectedUsers, setSelectedUsers] = useState<Set<string>>(new Set());
   /** Creator currently expanded in the user tab */
   const [expandedUser, setExpandedUser] = useState<string | null>(null);
+  /** Pinterest: the pin the browser currently sits on; the list shows this one only. */
+  const [openPin, setOpenPin] = useState<string | null>(null);
+
+  useEffect(() => {
+    void loadOpenPin().then(setOpenPin).catch(() => {});
+  }, []);
+
+  // Open on the platform the browser was last capturing: each platform writes to its own storage
+  // slice, so defaulting to 小红书 made a Pinterest capture look like "什么都没嗅探到".
+  useEffect(() => {
+    let cancelled = false;
+    void loadRememberedPlatform()
+      .then((last) => {
+        if (!cancelled && last) setPlatform(last);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // ── RemixClip connection (port only) ──
   const [port, setPort] = useState<number | null>(null);
@@ -188,6 +210,7 @@ function App() {
         // Only refresh when the current platform's data updates, or always when no
         // platform is specified
         if (!msg.platform || msg.platform === platform) refresh();
+        if (msg.platform === "pinterest") void loadOpenPin().then(setOpenPin).catch(() => {});
       }
     };
     chrome.runtime.onMessage.addListener(listener);
@@ -201,10 +224,18 @@ function App() {
 
   const exploreNotes = useMemo(() => {
     if (!data) return [];
+    // Pinterest is detail-only: every pin the user clicked into accumulates here, newest first.
+    // Captures the old builds made from the explore feed stay out of the list (they were never
+    // opened), but nothing is deleted — the user's own captures are never thrown away.
+    if (platform === "pinterest") {
+      return Object.values(data.notes)
+        .filter((n) => n.source === "note_detail")
+        .sort((a, b) => (b.time || 0) - (a.time || 0));
+    }
     return Object.values(data.notes)
       .filter((n) => n.source === "explore" || n.source === "note_detail")
       .sort((a, b) => (b.time || 0) - (a.time || 0));
-  }, [data]);
+  }, [data, platform, openPin]);
 
   const userNotes = useMemo(() => {
     if (!data) return [];
@@ -246,6 +277,14 @@ function App() {
   // explore tab: selects note_id
   // user tab creator list: selects creator user_id
   // user tab after expanding: selects note_id
+
+  // "Send to RemixClip" should mean the pin the user just opened; the rest of the accumulated
+  // list stays available for manual selection.
+  useEffect(() => {
+    if (platform !== "pinterest" || !openPin) return;
+    if (!data?.notes[openPin]) return;
+    setSelected((prev) => (prev.size === 1 && prev.has(openPin) ? prev : new Set([openPin])));
+  }, [platform, openPin, data]);
 
   /** Whether currently in creator selection mode (user tab not expanded) */
   const isUserListMode = tab === "user" && !expandedUser;

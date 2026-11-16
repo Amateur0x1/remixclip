@@ -36,6 +36,17 @@
     return 0;
   }
 
+  /**
+   * Pinterest reports clip length in milliseconds (its own player works in ms), while the panel
+   * and the library contract store seconds. Treating 13033 as seconds rendered a 13-second pin as
+   * "217:13", so normalise here: pins are capped well under 1000 seconds.
+   */
+  function toSeconds(value) {
+    var n = toInt(value);
+    if (n <= 0) return 0;
+    return n >= 1000 ? Math.round(n / 1000) : n;
+  }
+
   function firstString() {
     for (var i = 0; i < arguments.length; i += 1) {
       var value = arguments[i];
@@ -117,9 +128,17 @@
         url: url,
         width: toInt(item.width),
         height: toInt(item.height),
-        duration: toInt(item.duration),
+        duration: toSeconds(item.duration),
       });
     }
+    // A pin can expose the same clip as a progressive MP4 and as an HLS manifest (`V_HLSV4`).
+    // Only the MP4 is a file the library can download and analyse, so drop the manifests when a
+    // real file exists instead of letting the area sort pick either one at random.
+    var progressive = items.filter(function (item) {
+      return /\.mp4(\?|$)/i.test(item.url);
+    });
+    if (progressive.length > 0) items = progressive;
+
     items.sort(function (a, b) {
       return (b.width || 0) * (b.height || 0) - (a.width || 0) * (a.height || 0);
     });
@@ -287,7 +306,15 @@
 
   var contextUrl = window.location.href;
 
+  /** The pin the user actually opened (`/pin/<id>/`); null on home, explore, search and boards. */
+  function openPinId() {
+    var match = /\/pin\/(\d+)/.exec(window.location.pathname);
+    return match ? match[1] : null;
+  }
+
   function forward(source, payload, apiUrl) {
+    // Capture is opt-in by navigation: nothing leaves the page unless the user is on a pin.
+    if (!openPinId()) return;
     window.postMessage(
       { type: MESSAGE_TYPE, source: source, payload: payload, url: apiUrl, pageUrl: contextUrl },
       "*"
@@ -305,13 +332,18 @@
   function handleResponse(url, json) {
     if (!json || typeof json !== "object") return;
 
+    // Only the pin the user clicked into is capture-worthy. Feed and explore payloads carry
+    // dozens of pins each and used to be merged as "explore" entries, which flooded the library
+    // with content nobody opened.
+    var pinId = openPinId();
+    if (!pinId) return;
+
     if (url.indexOf("PinCommentResource") >= 0) {
       var comments = [];
       collectComments(json, comments, 0);
       if (comments.length > 0) {
-        var openPinId = (/\/pin\/(\d+)/.exec(contextUrl) || [])[1] || "";
         console.log("[RemixClip] Pinterest 评论拦截:", comments.length, "条");
-        forward("pin_comment", { pin_id: openPinId, comments: comments }, url);
+        forward("pin_comment", { pin_id: pinId, comments: comments }, url);
       }
       return;
     }
@@ -319,16 +351,15 @@
     var pins = [];
     collectPins(json, pins, 0);
     pins = dedupePins(pins);
-    if (pins.length === 0) return;
 
-    if (pins.length === 1 && /\/pin\/\d+/.test(contextUrl)) {
-      console.log("[RemixClip] Pinterest 图钉详情拦截:", pins[0].id);
-      forward("pin_detail", pins[0], url);
-      return;
+    // The same response often also carries "related pins"; keep the opened one only.
+    for (var i = 0; i < pins.length; i += 1) {
+      if (String(pins[i].id) === pinId) {
+        console.log("[RemixClip] Pinterest 图钉详情拦截:", pinId);
+        forward("pin_detail", pins[i], url);
+        return;
+      }
     }
-
-    console.log("[RemixClip] Pinterest 列表拦截:", pins.length, "条");
-    forward("pin_feed", { pins: pins }, url);
   }
 
   function matchPinterestApi(url) {
