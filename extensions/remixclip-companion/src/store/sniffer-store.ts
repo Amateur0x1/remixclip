@@ -207,6 +207,30 @@ const COMMENT_PREFIX = "comment:";
 const META_KEY = "meta";
 const CARDS_KEY = "cards";
 
+/**
+ * Capture is detail-only, so the panel shows exactly the pin the user opened. The service worker
+ * records that pin on every capture; the panel reads it when it mounts or refreshes.
+ */
+export const OPEN_PIN_KEY = `${NAMESPACE}:pinterest:open-pin`;
+
+export async function rememberOpenPin(pinId: string): Promise<void> {
+  await chrome.storage.local.set({ [OPEN_PIN_KEY]: pinId });
+}
+
+export async function loadOpenPin(): Promise<string | null> {
+  const stored = (await chrome.storage.local.get(OPEN_PIN_KEY)) as Record<string, unknown>;
+  const value = stored[OPEN_PIN_KEY];
+  return typeof value === "string" && value ? value : null;
+}
+
+/** Drop notes and their comments; used when purging the pre-detail-only explore captures. */
+export async function removeNotes(platform: PlatformKey, noteIds: string[]): Promise<void> {
+  if (noteIds.length === 0) return;
+  await chrome.storage.local.remove(
+    noteIds.flatMap((noteId) => [noteKey(platform, noteId), commentKey(platform, noteId)]),
+  );
+}
+
 function metaKey(platform: PlatformKey): string {
   return PREFIXES[platform] + META_KEY;
 }

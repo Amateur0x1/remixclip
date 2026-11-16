@@ -5,6 +5,7 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import {
   loadData,
+  loadOpenPin,
   type SnifferData,
   type NoteEntry,
   type NoteCard,
@@ -59,6 +60,12 @@ function App() {
   const [selectedUsers, setSelectedUsers] = useState<Set<string>>(new Set());
   /** Creator currently expanded in the user tab */
   const [expandedUser, setExpandedUser] = useState<string | null>(null);
+  /** Pinterest: the pin the browser currently sits on; the list shows this one only. */
+  const [openPin, setOpenPin] = useState<string | null>(null);
+
+  useEffect(() => {
+    void loadOpenPin().then(setOpenPin).catch(() => {});
+  }, []);
 
   // ── RemixClip connection (port only) ──
   const [port, setPort] = useState<number | null>(null);
@@ -188,6 +195,7 @@ function App() {
         // Only refresh when the current platform's data updates, or always when no
         // platform is specified
         if (!msg.platform || msg.platform === platform) refresh();
+        if (msg.platform === "pinterest") void loadOpenPin().then(setOpenPin).catch(() => {});
       }
     };
     chrome.runtime.onMessage.addListener(listener);
@@ -201,10 +209,15 @@ function App() {
 
   const exploreNotes = useMemo(() => {
     if (!data) return [];
+    // Pinterest is detail-only: the list is the pin currently open in the browser, never the feed.
+    if (platform === "pinterest") {
+      const note = openPin ? data.notes[openPin] : undefined;
+      return note ? [note] : [];
+    }
     return Object.values(data.notes)
       .filter((n) => n.source === "explore" || n.source === "note_detail")
       .sort((a, b) => (b.time || 0) - (a.time || 0));
-  }, [data]);
+  }, [data, platform, openPin]);
 
   const userNotes = useMemo(() => {
     if (!data) return [];
@@ -246,6 +259,13 @@ function App() {
   // explore tab: selects note_id
   // user tab creator list: selects creator user_id
   // user tab after expanding: selects note_id
+
+  // The opened pin is the only thing on screen, so make "send" mean that pin without extra clicks.
+  useEffect(() => {
+    if (platform !== "pinterest" || exploreNotes.length === 0) return;
+    const id = exploreNotes[0].note_id;
+    setSelected((prev) => (prev.size === 1 && prev.has(id) ? prev : new Set([id])));
+  }, [platform, exploreNotes]);
 
   /** Whether currently in creator selection mode (user tab not expanded) */
   const isUserListMode = tab === "user" && !expandedUser;

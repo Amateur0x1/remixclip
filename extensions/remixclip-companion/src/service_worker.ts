@@ -37,6 +37,8 @@ import {
   loadData,
   saveChanges,
   clearData,
+  rememberOpenPin,
+  removeNotes,
   toInt,
   parsePageContext,
 } from "./store/sniffer-store";
@@ -53,7 +55,11 @@ const sidePanelStatus = {
 chrome.runtime.onInstalled.addListener(() => {
   console.log("[RemixClip] 扩展已安装");
   chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });
+  void pruneLegacyPinterestFeedNotes();
 });
+
+// The worker is also restarted by Chrome without onInstalled; the flag makes this a no-op then.
+void pruneLegacyPinterestFeedNotes();
 
 // ── Side Panel connection listener ──
 
@@ -228,6 +234,13 @@ async function handleSniffData(msg: SniffMessage): Promise<void> {
   }
 
   const change = tx.toChange(data);
+
+  // The panel mirrors the pin the user is on, even when this payload adds nothing new.
+  if (platform === "pinterest") {
+    const pinId = pinterestOpenPinId(msg.pageUrl);
+    if (pinId) await rememberOpenPin(pinId);
+  }
+
   if (Object.keys(change).length === 0) return; // no changes: no write and no panel refresh
 
   await saveChanges(platform, change);
@@ -1045,6 +1058,29 @@ function mergeDyUserProfile(data: SnifferData, raw: Record<string, unknown>, ctx
  * Every field is read defensively: Pinterest changes its resource envelopes often, and an
  * older/newer page shape must never lose the whole capture.
  */
+
+/**
+ * Detail-only is also a migration: builds before it merged every explore/feed pin into storage,
+ * and those entries would still be listed (and exported) next to the pin the user opened.
+ */
+const PIN_DETAIL_ONLY_KEY = "sms:pinterest:detail-only";
+
+async function pruneLegacyPinterestFeedNotes(): Promise<void> {
+  const flag = (await chrome.storage.local.get(PIN_DETAIL_ONLY_KEY)) as Record<string, unknown>;
+  if (flag[PIN_DETAIL_ONLY_KEY]) return;
+
+  const data = await loadData("pinterest");
+  const stale = Object.values(data.notes)
+    .filter((note) => note.source === "explore")
+    .map((note) => note.note_id);
+  await removeNotes("pinterest", stale);
+  await chrome.storage.local.set({ [PIN_DETAIL_ONLY_KEY]: true });
+
+  if (stale.length > 0) {
+    dataCache.delete("pinterest");
+    console.log("[RemixClip] 已清理旧版 Pinterest 列表采集:", stale.length, "条");
+  }
+}
 
 /** The pin the user opened, from the page URL (`/pin/<id>/`); null on every other Pinterest page. */
 function pinterestOpenPinId(url: string | undefined): string | null {
