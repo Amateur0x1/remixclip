@@ -1,3 +1,8 @@
+/**
+ * [INPUT]: Shipped runtime definitions.
+ * [OUTPUT]: Display-ordered agent registry and explicit ID lookup; no default agent.
+ * [POS]: Runtime catalog shared by detection and run creation.
+ */
 import type { RuntimeAgentDef } from './types.js';
 import { aiderAgentDef } from './defs/aider.js';
 import { ampAgentDef } from './defs/amp.js';
@@ -67,8 +72,6 @@ export const AGENT_DEFS: RuntimeAgentDef[] = [
   // profile stdio protocol
   deepseekHarnessAgentDef,
 ];
-
-export const DEFAULT_AGENT_ID = claudeAgentDef.id;
 
 export function getAgentDef(id: string): RuntimeAgentDef | null {
   return AGENT_DEFS.find((def) => def.id === id) ?? null;

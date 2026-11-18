@@ -1,15 +1,15 @@
 'use client';
 
 /**
- * [INPUT]: The library item the user chose, the shared download feed, and the guidance they type.
- * [OUTPUT]: A confirm dialog that collects an OPTIONAL brief ("只复刻前 5 秒"), unblocks a missing
- *           source by downloading it in place, then calls `onProceed(guidance)`.
- * [POS]: The one step between "让 AI 复刻这条" and a project. It exists because the handoff needs
- *        two things a card click cannot express: the guidance (optional, so the dialog must still be
- *        skippable) and a local source clip (without it the agent has no file to read at all).
+ * [INPUT]: A library item, detected CLIs, the shared download feed and optional guidance.
+ * [OUTPUT]: Mandatory explicit CLI selection (never preselected), local-source preparation and
+ *           an awaited recreation handoff; failures keep the dialog open.
+ * [POS]: Confirmation boundary between a library card and a CLI-backed recreation project.
  */
-import { useEffect, useState } from 'react';
-import type { LibraryItemSummary, MediaFileStatus } from '@remixclip/contracts';
+import { useEffect, useRef, useState } from 'react';
+import type { AgentInfo, LibraryItemSummary, MediaFileStatus } from '@remixclip/contracts';
+import { LoaderCircle } from 'lucide-react';
+import { AgentIcon } from '@/components/agents/AgentIcon';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -20,34 +20,47 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Textarea } from '@/components/ui/textarea';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useDownloads } from './DownloadsCenter';
 import { getLibraryShots } from '@/providers/library';
 import { useI18n } from '@/i18n';
 
 export function ReplicateDialog({
   item,
+  agents,
+  agentsLoading,
+  onOpenSettings,
   onClose,
   onProceed,
 }: {
   item: LibraryItemSummary | null;
+  agents: AgentInfo[];
+  agentsLoading: boolean;
+  onOpenSettings: () => void;
   onClose: () => void;
-  /** Guidance is already trimmed; an empty string means "recreate the whole clip as-is". */
-  onProceed: (guidance: string) => void;
+  /** Only an explicit CLI selection may proceed; rejection leaves this dialog open. */
+  onProceed: (guidance: string, agentId: string) => Promise<void>;
 }) {
   const { entryFor, start } = useDownloads();
   const { t } = useI18n();
   const [guidance, setGuidance] = useState('');
+  const [agentId, setAgentId] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const submittingRef = useRef(false);
+  const availableAgents = agents.filter((agent) => agent.available);
+  const selectedAgent = availableAgents.find((agent) => agent.id === agentId);
+  const canProceed = !agentsLoading && Boolean(selectedAgent);
   /** Media status straight from the item, for sources downloaded outside the feed's window. */
   const [probed, setProbed] = useState<MediaFileStatus | null>(null);
   const [probeSettled, setProbeSettled] = useState(false);
   const itemId = item?.id ?? null;
 
-  // A fresh dialog is a fresh ask: carrying text from the previous item would silently steer it.
-  useEffect(() => { setGuidance(''); }, [itemId]);
+  // A fresh dialog must not inherit guidance or silently reuse a CLI from the previous item.
+  useEffect(() => { setGuidance(''); setAgentId(''); setError(''); }, [itemId]);
 
   // The download feed only covers active work plus roughly a day of results, so a clip downloaded
-  // earlier has no entry there. Ask the item itself rather than reporting a downloaded source as
-  // missing and re-downloading it.
+  // earlier has no entry there. Ask the item itself instead of downloading it again.
   useEffect(() => {
     setProbed(null);
     setProbeSettled(false);
@@ -66,23 +79,35 @@ export function ReplicateDialog({
   const running = status === 'pending' || status === 'downloading';
   const failed = status === 'failed';
   const percent = Math.round((entry?.media.progress ?? 0) * 100);
-  // No feed entry and the probe is still in flight: showing "not downloaded" now would flash a
-  // download prompt for a clip that is very likely already on disk.
   const checking = !entry && !probeSettled;
 
   const download = () => {
     if (!itemId) return;
-    // A failure keeps the dialog open and surfaces under the source row; retrying is one click.
     void start(itemId).catch(() => {});
   };
 
-  const proceed = () => {
-    if (!ready) return;
-    onProceed(guidance.trim());
+  const close = () => {
+    if (!submittingRef.current) onClose();
+  };
+
+  const proceed = async () => {
+    if (!ready || !canProceed || submittingRef.current) return;
+    submittingRef.current = true;
+    setBusy(true);
+    setError('');
+    try {
+      await onProceed(guidance.trim(), agentId);
+      onClose();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : t('errors.createRun'));
+    } finally {
+      submittingRef.current = false;
+      setBusy(false);
+    }
   };
 
   return (
-    <Dialog open={Boolean(item)} onOpenChange={(open) => { if (!open) onClose(); }}>
+    <Dialog open={Boolean(item)} onOpenChange={(open) => { if (!open) close(); }}>
       <DialogContent className="sm:max-w-[460px]">
         <DialogHeader>
           <DialogTitle>{t('library.replicateDialogTitle')}</DialogTitle>
@@ -92,12 +117,41 @@ export function ReplicateDialog({
         </DialogHeader>
 
         <div className="space-y-1.5">
+          <label htmlFor="replicate-agent" className="text-xs font-medium text-foreground">
+            {t('library.replicateAgentLabel')}
+          </label>
+          <Select value={selectedAgent ? agentId : ''} onValueChange={setAgentId} disabled={agentsLoading || busy || !availableAgents.length}>
+            <SelectTrigger id="replicate-agent" aria-required="true" className="w-full">
+              <SelectValue placeholder={agentsLoading ? t('sidebar.detecting') : t('library.replicateAgentPlaceholder')} />
+            </SelectTrigger>
+            <SelectContent>
+              {availableAgents.map((agent) => (
+                <SelectItem key={agent.id} value={agent.id}>
+                  <AgentIcon id={agent.id} size={16} />
+                  {agent.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <p className="text-[11px] leading-4 text-muted-foreground">{t('library.replicateAgentHint')}</p>
+          {!agentsLoading && !availableAgents.length && (
+            <div role="status" className="rounded-md border border-border/70 bg-secondary/40 px-3 py-2">
+              <p className="text-xs leading-5 text-muted-foreground">{t('agent.noneDesc')}</p>
+              <Button type="button" variant="outline" size="sm" className="mt-2" onClick={() => { close(); onOpenSettings(); }}>
+                {t('sidebar.connectAgent')}
+              </Button>
+            </div>
+          )}
+        </div>
+
+        <div className="space-y-1.5">
           <label htmlFor="replicate-guidance" className="text-xs font-medium text-foreground">
             {t('library.replicateGuidanceLabel')}
           </label>
           <Textarea
             id="replicate-guidance"
             rows={3}
+            disabled={busy}
             value={guidance}
             placeholder={t('library.replicateGuidancePlaceholder')}
             onChange={(event) => setGuidance(event.target.value)}
@@ -105,7 +159,7 @@ export function ReplicateDialog({
               if (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return;
               if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
                 event.preventDefault();
-                proceed();
+                void proceed();
               }
             }}
             className="min-h-[74px] resize-none text-[13px] leading-5"
@@ -118,9 +172,7 @@ export function ReplicateDialog({
         {!ready && !checking && (
           <div className="rounded-md border border-border/70 bg-secondary/40 px-3 py-2">
             <p className="text-[11.5px] leading-4 text-muted-foreground">
-              {failed
-                ? t('library.replicateSourceFailed')
-                : t('library.replicateSourcePending')}
+              {failed ? t('library.replicateSourceFailed') : t('library.replicateSourcePending')}
             </p>
             {running && (
               <div className="mt-2 flex items-center gap-2">
@@ -141,19 +193,21 @@ export function ReplicateDialog({
           </div>
         )}
 
+        {error && <p role="alert" className="text-xs leading-5 text-status-interrupted">{error}</p>}
         <DialogFooter>
-          <Button type="button" variant="ghost" onClick={onClose}>
+          <Button type="button" variant="ghost" disabled={busy} onClick={close}>
             {t('common.cancel')}
           </Button>
           {checking ? (
             <Button type="button" disabled>{t('library.replicateCheckingSource')}</Button>
           ) : ready ? (
-            <Button type="button" onClick={proceed}>{t('library.replicateStart')}</Button>
+            <Button type="button" disabled={!canProceed || busy} onClick={() => void proceed()}>
+              {busy && <LoaderCircle className="size-3.5 animate-spin" aria-hidden="true" />}
+              {t('library.replicateStart')}
+            </Button>
           ) : (
             <Button type="button" disabled={running} onClick={download}>
-              {running
-                ? t('library.replicateDownloading', { percent })
-                : t('library.replicateDownloadNow')}
+              {running ? t('library.replicateDownloading', { percent }) : t('library.replicateDownloadNow')}
             </Button>
           )}
         </DialogFooter>

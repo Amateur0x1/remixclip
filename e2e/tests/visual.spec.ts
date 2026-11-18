@@ -1,7 +1,7 @@
 /**
  * [INPUT]: apps/web first screen (all /api/* intercepted by the mocks in this file).
  * [OUTPUT]: Visual baselines: chat workspace (project + conversation list), library skeleton,
- *   library list.
+ *   library list; behavioral regression coverage for explicit CLI selection and chat gating.
  * [POS]: The fallback for regressions such as skeleton-screen flicker; screenshots are
  *   compared pixel by pixel against e2e/baselines.
  */
@@ -178,6 +178,9 @@ function placeholderSvg(coverUrl: string): string {
 
 interface MockOptions {
   agents?: AgentInfo[];
+  /** null = no saved connection; discovery alone must never select a CLI. */
+  agentId?: string | null;
+  sourceReady?: boolean;
   /** pending = the request hangs forever, to capture the first-frame skeleton. */
   library?: 'loaded' | 'pending';
 }
@@ -187,6 +190,7 @@ interface MockOptions {
  * nor slips into real data when a mock is missing, which would drift the baselines.
  */
 async function mockDaemon(page: Page, options: MockOptions = {}): Promise<void> {
+  let config = { agentId: options.agentId === null ? undefined : options.agentId ?? 'claude' };
   await page.route('**/api/**', async (route) => {
     const { pathname } = new URL(route.request().url());
     // Conversations only exist under a project: /api/projects/:id/conversations[/:cid/messages].
@@ -199,14 +203,25 @@ async function mockDaemon(page: Page, options: MockOptions = {}): Promise<void> 
     if (/^\/api\/projects\/[^/]+\/conversations\/[^/]+\/messages$/.test(pathname)) {
       return route.fulfill({ json: { messages: [] } });
     }
+    if (/^\/api\/library\/items\/[^/]+\/shots$/.test(pathname)) {
+      return route.fulfill({ json: {
+        shots: [], job: null,
+        media: options.sourceReady ? {
+          id: 'source-1', itemId: LIBRARY_ITEMS[0]!.id, kind: 'source',
+          path: '/mock/source.mp4', status: 'ready', progress: 1, createdAt: T0, updatedAt: T0,
+        } : null,
+      } });
+    }
     switch (pathname) {
       case '/api/agents':
         return route.fulfill({ json: { agents: options.agents ?? AGENTS } });
       case '/api/projects':
         return route.fulfill({ json: { projects: PROJECTS } });
       case '/api/app-config':
-        // An agent is connected globally, so the first-run settings drawer stays closed.
-        return route.fulfill({ json: { agentId: 'claude' } });
+        if (route.request().method() === 'PUT') config = { ...config, ...route.request().postDataJSON() };
+        return route.fulfill({ json: config });
+      case '/api/library/downloads':
+        return route.fulfill({ json: { downloads: [] } });
       case '/api/system/info':
         // The settings drawer prints the daemon endpoint; without this mock it renders an error.
         return route.fulfill({ json: RUNTIME_INFO });
@@ -304,4 +319,98 @@ test('设置页：能力位与未登录提示', async ({ page }) => {
   await expect(page.getByText('未登录').first()).toBeVisible();
   await settle(page);
   await expectVisual(page, 'settings-page');
+});
+
+for (const scenario of [
+  { label: '未连接', agentId: null },
+  { label: '已绑定 CLI 不可用', agentId: 'codex' },
+]) {
+  test(`CLI 连接：${scenario.label}时禁止已有对话发送`, async ({ page }) => {
+    await mockDaemon(page, { agentId: scenario.agentId });
+    let runRequests = 0;
+    page.on('request', (request) => { if (request.method() === 'POST' && new URL(request.url()).pathname === '/api/runs') runRequests++; });
+    await page.goto('/');
+    await expect(page.getByRole('heading', { name: '设置', exact: true })).toBeVisible();
+    await page.getByRole('button', { name: '默认项目', exact: true }).click();
+    const composer = page.getByRole('textbox', { name: '消息内容' });
+    await expect(composer).toBeDisabled();
+    await expect(page.getByText('请先连接并选择一个 Agent CLI，再开始对话。', { exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: '发送', exact: true })).toBeDisabled();
+    expect(runRequests).toBe(0);
+    await page.locator('main').getByRole('button', { name: '连接本地 Agent', exact: true }).click();
+    await expect(page.getByRole('heading', { name: '设置', exact: true })).toBeVisible();
+  });
+}
+
+test('CLI 连接：保存失败不得解锁对话', async ({ page }) => {
+  await mockDaemon(page, { agentId: null });
+  await page.route('**/api/app-config', (route) => route.fulfill({
+    status: route.request().method() === 'PUT' ? 500 : 200,
+    json: route.request().method() === 'PUT' ? { error: 'save failed' } : {},
+  }));
+  await page.goto('/');
+  await expect(page.getByRole('heading', { name: '设置', exact: true })).toBeVisible();
+  await page.locator('main').getByRole('button', { name: '连接', exact: true }).click();
+  await expect(page.getByRole('alert').first()).toBeVisible();
+  await page.getByRole('button', { name: '默认项目', exact: true }).click();
+  await expect(page.getByRole('textbox', { name: '消息内容' })).toBeDisabled();
+});
+
+for (const savedAgentId of [null, 'claude']) {
+  test(`CLI 连接：复刻必须手动选择 CLI（已有连接：${savedAgentId ?? '无'}）`, async ({ page }) => {
+    await mockDaemon(page, {
+      agentId: savedAgentId,
+      sourceReady: true,
+      agents: [AGENTS[0]!, { ...AGENTS[1]!, available: true, models: ['test-codex-model'] }],
+    });
+    const mutationRequests: { pathname: string; body: Record<string, unknown> }[] = [];
+    page.on('request', (request) => {
+      if (request.method() === 'POST' || request.method() === 'PUT') {
+        mutationRequests.push({ pathname: new URL(request.url()).pathname, body: request.postDataJSON() });
+      }
+    });
+    await page.goto('/');
+    await expect(page.getByRole('button', { name: '默认项目', exact: true })).toBeVisible();
+    await page.getByRole('button', { name: '素材库', exact: true }).click();
+    await page.getByRole('button', { name: '让 AI 复刻这条' }).first().click();
+    const dialog = page.getByRole('dialog');
+    const start = dialog.getByRole('button', { name: '开始复刻', exact: true });
+    await expect(start).toBeDisabled();
+    await expect(dialog.getByRole('combobox')).toHaveText('请选择一个 Agent CLI');
+    await dialog.getByRole('textbox').press('Control+Enter');
+    expect(mutationRequests).toEqual([]);
+    await dialog.getByRole('combobox').click();
+    await page.getByRole('option', { name: 'Codex', exact: true }).click();
+    await expect(start).toBeEnabled();
+    await dialog.getByRole('textbox').fill('只复刻前 5 秒');
+    await page.route('**/api/projects', (route) => route.fulfill({ json: {
+      project: { ...PROJECTS[0]!, id: 'proj_replicate' },
+      conversation: { ...CONVERSATIONS[0]!, id: 'conv_replicate', projectId: 'proj_replicate' },
+    } }));
+    // A deliberate rejection keeps the modal open and proves the selected CLI reaches the run.
+    await page.route('**/api/runs', (route) => route.fulfill({ status: 400, json: { error: 'test run rejected' } }));
+    await start.click();
+    await expect.poll(() => mutationRequests.some((request) => request.pathname === '/api/runs')).toBe(true);
+    expect(mutationRequests.find((request) => request.pathname === '/api/app-config')?.body.agentId).toBe('codex');
+    expect(mutationRequests.find((request) => request.pathname === '/api/runs')?.body).toMatchObject({
+      agentId: 'codex', projectId: 'proj_replicate', conversationId: 'conv_replicate', guidance: '只复刻前 5 秒',
+    });
+    await expect(dialog).toBeVisible();
+    await expect(dialog.getByRole('alert')).toBeVisible();
+    await expect(start).toBeEnabled();
+  });
+}
+
+test('CLI 连接：没有可用 CLI 时复刻引导去连接', async ({ page }) => {
+  await mockDaemon(page, { agentId: null, agents: [{ ...AGENTS[1]!, available: false }], sourceReady: true });
+  await page.goto('/');
+  await expect(page.getByRole('button', { name: '默认项目', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: '素材库', exact: true }).click();
+  await page.getByRole('button', { name: '让 AI 复刻这条' }).first().click();
+  const dialog = page.getByRole('dialog');
+  await expect(dialog.getByRole('combobox')).toBeDisabled();
+  await expect(dialog.getByRole('button', { name: '开始复刻', exact: true })).toBeDisabled();
+  await dialog.getByRole('button', { name: '连接本地 Agent', exact: true }).click();
+  await expect(dialog).toHaveCount(0);
+  await expect(page.getByRole('heading', { name: '设置', exact: true })).toBeVisible();
 });

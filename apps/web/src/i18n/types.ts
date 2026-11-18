@@ -174,6 +174,7 @@ export interface Dict {
   'chat.detectingButton': string;
   'chat.emptyPickAgent': string;
   'chat.emptyPickAgentDesc': string;
+  'chat.connectCliRequired': string;
   'chat.errorPrefix': string;
   'chat.jumpToBottom': string;
   'chat.messageAria': string;
@@ -363,6 +364,9 @@ export interface Dict {
   'library.replicatePromptLocal': string;
   'library.replicateDialogTitle': string;
   'library.replicateDialogDesc': string;
+  'library.replicateAgentLabel': string;
+  'library.replicateAgentPlaceholder': string;
+  'library.replicateAgentHint': string;
   /**
    * Optional brief typed in the confirm dialog; empty means "recreate the whole clip". It travels
    * as `ChatRunCreateRequest.guidance`, so it is injected into the prompt and never becomes part
