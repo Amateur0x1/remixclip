@@ -2,7 +2,7 @@
 
 /**
  * [INPUT]: Current session message stream, LiveTurn state, reconnect state and attachment state.
- * [OUTPUT]: Chat main column (window header, the "what do you want to create" home hero before
+ * [OUTPUT]: CLI-gated chat main column (window header, connection guidance and home hero before
  *           any chat is open, scrolling message stream, back-to-bottom button and Composer input).
  * [POS]: Main panel component of the chat workspace.
  */
@@ -189,6 +189,8 @@ export function ChatConversationPane({
   const [artifactsOpen, setArtifactsOpen] = useState(false);
   const [artifactTarget, setArtifactTarget] = useState<ArtifactTarget | null>(null);
   const storedPanelState = useRef(false);
+  const agentConnected = !agentsLoading && Boolean(agentId && agent?.available);
+  const composerDisabled = !agentConnected || Boolean(currentConvId && loadedConversationId !== currentConvId);
 
   // Read after mount so SSR and the first client paint agree; then persist every explicit toggle.
   useEffect(() => {
@@ -226,9 +228,9 @@ export function ChatConversationPane({
       onSubmit={() => sendMessage()}
       onStop={() => void stopRun()}
       running={isRunning}
-      disabled={Boolean(currentConvId && loadedConversationId !== currentConvId)}
+      disabled={composerDisabled}
       canSubmit={Boolean(
-        (inputText.trim() || pendingAttachments.some((item) => item.uploaded && !item.error)) &&
+        agentConnected && (inputText.trim() || pendingAttachments.some((item) => item.uploaded && !item.error)) &&
           !pendingAttachments.some((item) => item.uploading || item.error || !item.uploaded) &&
           !(currentConvId && loadedConversationId !== currentConvId),
       )}
@@ -307,7 +309,7 @@ export function ChatConversationPane({
                 variant="ghost"
                 size="icon-sm"
                 aria-label={t('chat.attach')}
-                disabled={Boolean(currentConvId && loadedConversationId !== currentConvId)}
+                disabled={composerDisabled}
                 onClick={() => fileInputRef.current?.click()}
                 className="shrink-0 text-muted-foreground hover:text-foreground"
               >
@@ -349,11 +351,11 @@ export function ChatConversationPane({
             value={model}
             options={modelOptions}
             onValueChange={setModel}
-            disabled={isRunning}
+            disabled={isRunning || !agentConnected}
           />
         ) : undefined
       }
-      placeholder={hero ? t('home.placeholder') : isRunning ? t('chat.placeholderRunning') : t('chat.placeholderIdle')}
+      placeholder={!agentConnected ? t('chat.connectCliRequired') : hero ? t('home.placeholder') : isRunning ? t('chat.placeholderRunning') : t('chat.placeholderIdle')}
       textareaClassName={hero ? 'min-h-[84px] text-[14.5px] leading-7' : undefined}
       textareaRef={inputRef}
       textareaProps={{ 'aria-label': t('chat.messageAria') }}
@@ -486,7 +488,7 @@ export function ChatConversationPane({
           </div>
         </div>
       ) : !currentConvId ? (
-        agentId ? (
+        agentConnected ? (
           /* The first screen: nothing is open yet, so the page offers one wide writing surface
              instead of a chat log. Chips write the opening line; the working folder sits under it
              because the project's directory is the only context a first message carries. */
@@ -643,6 +645,17 @@ export function ChatConversationPane({
           <div className="flex shrink-0 justify-center px-4 pb-4 md:px-6">
             <div className="w-full max-w-[600px]">
               {workflowError && <div role="alert" className={styles.pathError}>{workflowError}</div>}
+              {!agentConnected && (
+                <div role="status" className="mb-2 flex items-center gap-2 rounded-lg border border-border bg-secondary/40 px-3 py-2 text-xs leading-5">
+                  <Radar className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+                  <span className="min-w-0 flex-1 text-muted-foreground">
+                    {agentsLoading ? t('sidebar.detecting') : t('chat.connectCliRequired')}
+                  </span>
+                  <Button type="button" variant="outline" size="xs" disabled={agentsLoading} onClick={onOpenSettings}>
+                    {t('sidebar.connectAgent')}
+                  </Button>
+                </div>
+              )}
               {queued.some((item) => item.key === currentKey) && (
                 <div className={styles.queueHint} role="status">
                   {t('chat.queueHint', { count: queued.filter((item) => item.key === currentKey).length })}
@@ -694,7 +707,7 @@ export function ChatConversationPane({
                     value={model}
                     options={modelOptions}
                     onValueChange={setModel}
-                    disabled={isRunning}
+                    disabled={isRunning || !agentConnected}
                   />
                 </ComposerFooterEnd>
               </ComposerFooter>

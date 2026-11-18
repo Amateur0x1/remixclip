@@ -2,7 +2,7 @@
 
 /**
  * [INPUT]: daemon projects, conversations and the globally selected local agent.
- * [OUTPUT]: Project switching/creation, global agent selection, attachment-aware sending,
+ * [OUTPUT]: Explicit CLI connection, gated sending, project switching/creation, attachment-aware sending,
  *           per-conversation queue and draft state.
  * [POS]: Workspace chat orchestration; presentation stays in components.
  *
@@ -31,6 +31,9 @@ import { t, useI18n } from '@/i18n';
 import { useWorkspaceRuns } from './useWorkspaceRuns';
 
 export type SendOptions = {
+  /** Explicit CLI chosen by an out-of-composer entry; also freezes queued messages' runtime. */
+  agentId?: string;
+  model?: string;
   preserveDraft?: boolean;
   attachments?: ChatAttachment[];
   /**
@@ -135,6 +138,7 @@ export function useWorkspaceChat() {
   }, [currentConvId, loadedConversationId, runs.messages]);
   const activeProject = projects.find((project) => project.id === activeProjectId) ?? null;
   const activeAgent = agents.find((agent) => agent.id === agentId) ?? null;
+  const agentConnected = !agentsLoading && Boolean(activeAgent?.available);
   const currentKey = currentConvId ?? 'new';
   const currentRun = currentConvId ? runs.runningByConv[currentConvId] : undefined;
   const isRunning = startingKeys.has(currentKey) || !!currentRun;
@@ -196,22 +200,23 @@ export function useWorkspaceChat() {
 
   /** Connect (select) a local agent globally; persisted to app-config so the next turn uses it. */
   const selectAgent = useCallback(async (nextAgentId: string, nextModel?: string) => {
-    const previousId = agentId;
-    const previousModel = model;
-    setAgentIdState(nextAgentId);
-    if (nextModel !== undefined) setModel(nextModel);
+    if (agentsLoading || !agents.some((agent) => agent.id === nextAgentId && agent.available)) {
+      throw new Error(t('chat.connectCliRequired'));
+    }
     try {
       const saved = await putAppConfig({
         agentId: nextAgentId,
         ...(nextModel !== undefined ? { agentModels: { [nextAgentId]: nextModel } } : {}),
       });
+      setAgentIdState(nextAgentId);
       setModel((nextModel ?? saved.agentModels?.[nextAgentId]) ?? '');
+      setWorkflowError('');
+      return saved;
     } catch (error) {
-      setAgentIdState(previousId);
-      setModel(previousModel);
       setWorkflowError(error instanceof Error ? error.message : t('errors.appConfigPutHttp', { status: 0 }));
+      throw error;
     }
-  }, [agentId, model]);
+  }, [agents, agentsLoading]);
 
   /** Remember the model per agent ('' = CLI default). */
   const chooseModel = useCallback((nextModel: string) => {
@@ -342,7 +347,13 @@ export function useWorkspaceChat() {
   const sendText = useCallback(async (text: string, options: SendOptions = {}): Promise<boolean> => {
     const attachments = options.attachments ?? [];
     if (!text && !attachments.length) return false;
-    let projectId = options.projectId ?? activeProjectIdRef.current;
+    const selectedAgentId = options.agentId ?? agentId;
+    if (agentsLoading || !agents.some((agent) => agent.id === selectedAgentId && agent.available)) {
+      setWorkflowError(t('chat.connectCliRequired'));
+      return false;
+    }
+    const selectedModel = options.model ?? (selectedAgentId === agentId ? model : '');
+    const projectId = options.projectId ?? activeProjectIdRef.current;
     /*
      * A project is founded from material: its `reference/` folder is the local source the agent
      * reads. A bare message therefore cannot conjure a project — the new-project dialog owns that
@@ -362,7 +373,7 @@ export function useWorkspaceChat() {
     const sendKey = conversationId ?? 'new';
     pausedQueueKeysRef.current.delete(sendKey);
     if (sendingKeysRef.current.has(sendKey) || runs.runningRef.current[conversationId ?? '']) {
-      setQueued((items) => [...items, { ...options, attachments, text, key: sendKey, id: crypto.randomUUID() }]);
+      setQueued((items) => [...items, { ...options, agentId: selectedAgentId!, model: selectedModel, attachments, text, key: sendKey, id: crypto.randomUUID() }]);
       if (!options.preserveDraft) setInputText('');
       return true;
     }
@@ -399,7 +410,7 @@ export function useWorkspaceChat() {
       // Only this turn's text goes over the wire: the daemon decides between resuming the
       // agent's upstream session and replaying the (agent-scoped) history from SQLite.
       const result = await createRun({
-        agentId: agentId ?? undefined, model, message: text, currentPrompt: text,
+        agentId: selectedAgentId!, model: selectedModel, message: text, currentPrompt: text,
         conversationId: targetConvId, projectId,
         attachments: attachments.length ? attachments : undefined,
         locale,
@@ -424,7 +435,7 @@ export function useWorkspaceChat() {
       sendingKeysRef.current.delete(activeKey);
       setStartingKeys((keys) => { const next = new Set(keys); next.delete(activeKey); return next; });
     }
-  }, [agentId, currentConvId, loadedConversationId, locale, model, refreshConversations, refreshProjects, runs.registerRun, runs.runningRef, setActiveProjectId, setMessages, setTurn, viewConvRef]);
+  }, [agentId, agents, agentsLoading, currentConvId, loadedConversationId, locale, model, refreshConversations, refreshProjects, runs.registerRun, runs.runningRef, setActiveProjectId, setMessages, setTurn, viewConvRef]);
 
   /**
    * Start a brand-new chat from an out-of-composer entry point (library "replicate"). In the 1:1
@@ -433,6 +444,11 @@ export function useWorkspaceChat() {
    */
   const startChatWithMessage = useCallback(async (text: string, options: StartChatOptions = {}): Promise<boolean> => {
     setWorkflowError('');
+    const selectedAgentId = options.agentId ?? agentId;
+    if (agentsLoading || !agents.some((agent) => agent.id === selectedAgentId && agent.available)) {
+      setWorkflowError(t('chat.connectCliRequired'));
+      return false;
+    }
     try {
       const { metadata, name, ...sendOptions } = options;
       const { project, conversation } = await createProject({
@@ -464,12 +480,12 @@ export function useWorkspaceChat() {
       setWorkflowError(error instanceof Error ? error.message : t('errors.createProject'));
       return false;
     }
-  }, [locale, sendText, setActiveProjectId, setMessages, setTurn, viewConvRef]);
+  }, [agentId, agents, agentsLoading, locale, sendText, setActiveProjectId, setMessages, setTurn, viewConvRef]);
 
   const sendTextRef = useRef(sendText);
   sendTextRef.current = sendText;
   useEffect(() => {
-    if (isRunning || sendingKeysRef.current.has(currentKey) || pausedQueueKeysRef.current.has(currentKey)) return;
+    if (!agentConnected || isRunning || sendingKeysRef.current.has(currentKey) || pausedQueueKeysRef.current.has(currentKey)) return;
     if (currentConvId && loadedConversationId !== currentConvId) return;
     const head = queued.find((item) => item.key === currentKey);
     if (!head) return;
@@ -482,11 +498,11 @@ export function useWorkspaceChat() {
         setQueued((items) => [head, ...items]);
       }
     });
-  }, [currentConvId, currentKey, isRunning, loadedConversationId, queued]);
+  }, [agentConnected, currentConvId, currentKey, isRunning, loadedConversationId, queued]);
 
   return { ...runs, currentConvId, loadedConversationId, historyLoading, conversations, setConversations,
     workflowError, setWorkflowError, agents, agentsLoading, refreshAgents,
-    agentId, activeAgent, selectAgent, model, setModel: chooseModel,
+    agentId, activeAgent, agentConnected, selectAgent, model, setModel: chooseModel,
      projects, activeProject, activeProjectId, projectsLoading, switchProject, addRecreationProject, renameProject, removeProject, refreshProjects,
     inputText, setInputText, inputRef, queued, setQueued, currentKey, isRunning,
     loadConversation, startNewChat, startChatWithMessage, sendText, sendTextRef, refreshConversations, resetFollowRef };

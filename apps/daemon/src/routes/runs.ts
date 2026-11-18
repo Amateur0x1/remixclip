@@ -1,5 +1,5 @@
 /**
- * [INPUT]: conversation run requests, the project a turn runs in and the selected agent.
+ * [INPUT]: conversation run requests, the project and an explicitly selected, installed CLI.
  * [OUTPUT]: pure-chat run (spawns a local agent), SSE event stream, status query and cancel.
  * [POS]: daemon's conversation run routes; the only place that decides a turn's context.
  *
@@ -36,7 +36,8 @@ import {
   promptLanguageName,
 } from '@remixclip/contracts';
 import { defaultConversationTitle } from '../conversation-title.js';
-import { DEFAULT_AGENT_ID, getAgentDef } from '../runtimes/registry.js';
+import { getAgentDef } from '../runtimes/registry.js';
+import { resolveAgentExecutable } from '../runtimes/executables.js';
 import type { RunManager, StoredEvent } from '../runtimes/runs.js';
 import { agentCliEnvForAgent, readAppConfig } from '../app-config.js';
 import { buildSkillsPrompt, materializeProjectSkills } from '../skills.js';
@@ -90,14 +91,22 @@ export function registerRunsRoutes(
       return;
     }
 
-    // The agent is a global preference; a turn may still override it explicitly.
+    // Only a user's explicit turn selection or saved connection may choose the CLI.
+    // Missing / removed agents never fall back to Claude or the first detected runtime.
     const appConfig = readAppConfig();
-    const requestedAgentId = body.agentId || appConfig.agentId || null;
-    let def = requestedAgentId ? getAgentDef(requestedAgentId) : null;
-    // A saved runtime can be removed between releases; only an explicit request should 400.
-    if (!def && !body.agentId) def = getAgentDef(DEFAULT_AGENT_ID);
+    const requestedAgentId = body.agentId ?? appConfig.agentId;
+    if (typeof requestedAgentId !== 'string' || !requestedAgentId.trim()) {
+      res.status(400).json({ error: '请先连接并选择一个 Agent CLI，再开始对话' });
+      return;
+    }
+    const def = getAgentDef(requestedAgentId);
     if (!def) {
-      res.status(400).json({ error: `未知 agent：${requestedAgentId ?? DEFAULT_AGENT_ID}` });
+      res.status(400).json({ error: `未知 Agent CLI：${requestedAgentId}，请重新连接并选择` });
+      return;
+    }
+    const configuredEnv = agentCliEnvForAgent(appConfig, def.id);
+    if (!resolveAgentExecutable(def, { ...process.env, ...def.env, ...configuredEnv })) {
+      res.status(400).json({ error: `${def.name} CLI 不可用，请先安装并在设置中连接` });
       return;
     }
 
@@ -228,7 +237,7 @@ export function registerRunsRoutes(
           conversationId: targetId,
           model,
           cwd,
-          configuredEnv: agentCliEnvForAgent(appConfig, def.id),
+          configuredEnv,
           resumeSessionId: plan.resumeSessionId,
         });
         createdRunId = created.id;

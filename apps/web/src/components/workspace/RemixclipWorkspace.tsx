@@ -1,7 +1,7 @@
 'use client';
 
 /**
- * [INPUT]: Chat/attachment/scroll hooks plus the extracted sidebar and chat-pane components.
+ * [INPUT]: CLI-gated chat hooks, explicit recreation CLI selection, attachments and scrolling.
  * [OUTPUT]: Chat workspace: project switching (one project = one chat) + a main pane that shows
  *           the conversation, the library, or the settings page.
  * [POS]: App Router workspace container; domain orchestration lives in separate hooks.
@@ -63,20 +63,20 @@ export function RemixclipWorkspace() {
   }, []);
   // No agent connected = first use: once detection finishes, put the settings drawer in front of the user.
   useEffect(() => {
-    if (settingsAutoOpenedRef.current || chat.agentsLoading || chat.agentId) return;
+    if (settingsAutoOpenedRef.current || chat.agentsLoading || chat.agentConnected) return;
     settingsAutoOpenedRef.current = true;
     setSettingsOpen(true);
-  }, [chat.agentsLoading, chat.agentId]);
+  }, [chat.agentsLoading, chat.agentConnected]);
 
   // A project only exists from material, so the empty state is the picker: show it once when the
   // project list finishes empty. Deleting the last project re-arms the prompt.
   useEffect(() => {
-    if (chat.projectsLoading || settingsOpen) return;
+    if (chat.projectsLoading || settingsOpen || pendingReplicate || !chat.agentConnected) return;
     if (chat.projects.length > 0) { newProjectPromptedRef.current = false; return; }
     if (newProjectPromptedRef.current) return;
     newProjectPromptedRef.current = true;
     setNewProjectOpen(true);
-  }, [chat.projectsLoading, chat.projects.length, settingsOpen]);
+  }, [chat.agentConnected, chat.projectsLoading, chat.projects.length, pendingReplicate, settingsOpen]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -118,6 +118,10 @@ export function RemixclipWorkspace() {
 
   const sendMessage = () => {
     if (attachmentSendRef.current) return;
+    if (!chat.agentConnected) {
+      chat.setWorkflowError(t('chat.connectCliRequired'));
+      return;
+    }
     if (attachments.pendingAttachments.some((item: PendingAttachment) => item.uploading || item.error || !item.uploaded)) {
       chat.setWorkflowError(t('workspace.attachmentPending')); return;
     }
@@ -142,27 +146,23 @@ export function RemixclipWorkspace() {
    * downloaded source there is nothing to copy, so the dialog's footer downloads it instead of
    * handing the agent a post URL it cannot fetch.
    */
-  const startReplicate = (item: LibraryItemSummary, guidance: string) => {
-    void buildReplicateHandoff(item, guidance)
-      .then((handoff) => {
-        if (!handoff.referenceName) {
-          // The dialog only enables 开始复刻 once the clip is local; this reopens it if the media
-          // disappeared in between (e.g. a deleted cache) instead of firing an empty handoff.
-          setPendingReplicate(item);
-          return;
-        }
-        setActiveTab('chat');
-        return chat.startChatWithMessage(handoff.prompt, {
-          preserveDraft: true,
-          // Injected-only: the transcript shows the brief, the agent also gets the constraints.
-          guidance: handoff.guidance,
-          name: item.title.slice(0, 40),
-          metadata: { kind: 'video', sourceLibraryItemId: handoff.libraryItemId },
-        });
-      })
-      .catch((error: unknown) => {
-        chat.setWorkflowError(error instanceof Error ? error.message : t('errors.createRun'));
-      });
+  const startReplicate = async (item: LibraryItemSummary, guidance: string, agentId: string) => {
+    const handoff = await buildReplicateHandoff(item, guidance);
+    if (!handoff.referenceName) throw new Error(t('library.replicateSourcePending'));
+    // Persist only this explicit choice. Pass it directly as well: React's saved selection
+    // has not necessarily rerendered before the newly-created project's first turn starts.
+    const saved = await chat.selectAgent(agentId);
+    const sent = await chat.startChatWithMessage(handoff.prompt, {
+      agentId,
+      model: saved.agentModels?.[agentId] ?? '',
+      preserveDraft: true,
+      guidance: handoff.guidance,
+      name: item.title.slice(0, 40),
+      metadata: { kind: 'video', sourceLibraryItemId: handoff.libraryItemId },
+    });
+    if (!sent) throw new Error(t('errors.createRun'));
+    setSettingsOpen(false);
+    setActiveTab('chat');
   };
 
   const replicateLibraryItem = (item: LibraryItemSummary) => {
@@ -221,7 +221,7 @@ export function RemixclipWorkspace() {
                 sidebarToggleRef={sidebarToggleRef}
                 agents={chat.agents} agentsLoading={chat.agentsLoading} agentId={chat.agentId} model={chat.model}
                 onRescan={chat.refreshAgents}
-                onConnectAgent={(id) => chat.selectAgent(id)}
+                onConnectAgent={async (id) => { await chat.selectAgent(id); }}
               />
             ) : activeTab === 'library' ? (
               <LibraryPane
@@ -272,11 +272,12 @@ export function RemixclipWorkspace() {
     />
     <ReplicateDialog
       item={pendingReplicate}
+      agents={chat.agents}
+      agentsLoading={chat.agentsLoading}
+      onOpenSettings={() => setSettingsOpen(true)}
       onClose={() => setPendingReplicate(null)}
-      onProceed={(guidance) => {
-        const item = pendingReplicate;
-        setPendingReplicate(null);
-        if (item) startReplicate(item, guidance);
+      onProceed={async (guidance, agentId) => {
+        if (pendingReplicate) await startReplicate(pendingReplicate, guidance, agentId);
       }}
     />
   </div>
