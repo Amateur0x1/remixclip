@@ -239,6 +239,9 @@ export const en: Dict = {
   'platform.bilibili': 'Bilibili',
   'platform.douyin': 'Douyin',
   'platform.pinterest': 'Pinterest',
+  'platform.youtube': 'YouTube',
+  'platform.twitter': 'X',
+  'platform.instagram': 'Instagram',
   'platform.xhs': 'Xiaohongshu',
 
   // ── library: list ──────────────────────────────────────────────────────

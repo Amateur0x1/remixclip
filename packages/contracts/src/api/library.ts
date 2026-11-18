@@ -11,7 +11,15 @@ import { z } from 'zod';
 
 // ── Platform ───────────────────────────────────────────────────────────────
 
-export const SOCIAL_PLATFORMS = ['xhs', 'bilibili', 'douyin', 'pinterest'] as const;
+export const SOCIAL_PLATFORMS = [
+  'xhs',
+  'bilibili',
+  'douyin',
+  'pinterest',
+  'youtube',
+  'twitter',
+  'instagram',
+] as const;
 
 export const socialPlatformSchema = z.enum(SOCIAL_PLATFORMS);
 
@@ -23,7 +31,10 @@ export const LIBRARY_PLATFORM_FILTERS = ['all', ...SOCIAL_PLATFORMS] as const;
 /** Error message for the platform filter (an unknown platform is a client bug and should not
  *  silently degrade to the `all` option). */
 const platformFilterSchema = z.enum(LIBRARY_PLATFORM_FILTERS, {
-  errorMap: () => ({ message: '不支持的平台，只接受 all / xhs / bilibili / douyin / pinterest' }),
+    errorMap: () => ({
+      message:
+        '不支持的平台，只接受 all / xhs / bilibili / douyin / pinterest / youtube / twitter / instagram',
+    }),
 });
 
 export const LIBRARY_SORTS = ['imported', 'published', 'likes'] as const;
@@ -42,6 +53,12 @@ const PLATFORM_ALIASES: Record<string, SocialPlatform> = {
   dy: 'douyin',
   pinterest: 'pinterest',
   pin: 'pinterest',
+  youtube: 'youtube',
+  yt: 'youtube',
+  twitter: 'twitter',
+  x: 'twitter',
+  instagram: 'instagram',
+  ig: 'instagram',
 };
 
 /**
@@ -134,12 +151,12 @@ export const libraryItemSummarySchema = libraryItemSchema.omit({
 
 export type LibraryItemSummary = z.infer<typeof libraryItemSummarySchema>;
 
+// Derived from SOCIAL_PLATFORMS so a new platform cannot be added without a matching counter.
 export const libraryCountsSchema = z.object({
   all: z.number(),
-  xhs: z.number(),
-  bilibili: z.number(),
-  douyin: z.number(),
-  pinterest: z.number(),
+  ...(Object.fromEntries(
+    SOCIAL_PLATFORMS.map((platform) => [platform, z.number()]),
+  ) as Record<SocialPlatform, z.ZodNumber>),
 });
 
 export type LibraryCounts = z.infer<typeof libraryCountsSchema>;

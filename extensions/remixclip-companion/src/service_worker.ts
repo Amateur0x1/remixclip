@@ -228,6 +228,15 @@ async function handleSniffData(msg: SniffMessage): Promise<void> {
     case "pinterest":
       handlePinterest(data, msg, payload, ctx, tx);
       break;
+    case "youtube":
+      handleDetailCapture(data, msg, payload, "youtube", tx);
+      break;
+    case "twitter":
+      handleDetailCapture(data, msg, payload, "twitter", tx);
+      break;
+    case "instagram":
+      handleDetailCapture(data, msg, payload, "instagram", tx);
+      break;
   }
 
   const change = tx.toChange(data);
@@ -1099,6 +1108,166 @@ function handlePinterest(
       mergePinterestComments(data, payload, tx);
       break;
   }
+}
+
+// ═══════════════════════════════════════════
+// ██  YouTube / X / Instagram
+// ═══════════════════════════════════════════
+//
+// These platforms only expose a post on its detail page, and each page shape changes often, so
+// the content scripts send one normalised object per post. The worker stays narrow: reject
+// anything that is not the post in the URL, then merge fields without letting a thin capture
+// overwrite a richer one.
+
+type DetailPlatform = "youtube" | "twitter" | "instagram";
+
+/** Home page of each platform: the referer its CDN expects when the media is fetched. */
+const PLATFORM_HOME: Record<DetailPlatform, string> = {
+  youtube: "https://www.youtube.com/",
+  twitter: "https://x.com/",
+  instagram: "https://www.instagram.com/",
+};
+
+/** Id of the post whose detail page is open; null on feeds, profiles and search. */
+function detailPostId(platform: DetailPlatform, url: string | undefined): string | null {
+  if (!url) return null;
+  try {
+    const parsed = new URL(url);
+    if (platform === "youtube") {
+      if (parsed.pathname === "/watch") return parsed.searchParams.get("v");
+      return /^\/shorts\/([\w-]+)/.exec(parsed.pathname)?.[1] ?? null;
+    }
+    if (platform === "twitter") return /\/status\/(\d+)/.exec(parsed.pathname)?.[1] ?? null;
+    return /\/(?:p|reel|tv)\/([\w-]+)/.exec(parsed.pathname)?.[1] ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function handleDetailCapture(
+  data: SnifferData,
+  msg: SniffMessage,
+  payload: Record<string, unknown>,
+  platform: DetailPlatform,
+  tx: Tx
+): void {
+  const openId = detailPostId(platform, msg.pageUrl);
+  const entry = parseCapturedPost(payload, platform);
+  if (!openId || !entry || entry.note_id !== openId) return;
+  mergeCapturedPost(data, entry, tx);
+}
+
+function isMediaUrl(value: unknown): value is string {
+  return typeof value === "string" && /^https?:\/\//i.test(value);
+}
+
+function parseCapturedPost(
+  raw: Record<string, unknown>,
+  platform: DetailPlatform
+): NoteEntry | null {
+  const idValue = raw.id;
+  const id =
+    typeof idValue === "string" || typeof idValue === "number" ? String(idValue).trim() : "";
+  if (!id) return null;
+
+  const creator = (raw.creator && typeof raw.creator === "object" ? raw.creator : {}) as Record<
+    string,
+    unknown
+  >;
+  const stats = (raw.stats && typeof raw.stats === "object" ? raw.stats : {}) as Record<
+    string,
+    unknown
+  >;
+
+  const images = (Array.isArray(raw.images) ? raw.images : []).filter(isMediaUrl).slice(0, 12);
+
+  const candidates = (Array.isArray(raw.videos) ? raw.videos : [])
+    .map((item) => {
+      const video = (item && typeof item === "object" ? item : {}) as Record<string, unknown>;
+      return {
+        url: isMediaUrl(video.url) ? video.url : "",
+        width: toInt(video.width),
+        height: toInt(video.height),
+        duration: toInt(video.duration),
+      };
+    })
+    .filter((video) => video.url !== "");
+
+  // The content scripts already ordered the candidates by usefulness (YouTube puts progressive
+  // streams first because an adaptive one has no audio; X/Instagram put mp4 before HLS). Keep
+  // that order instead of re-sorting on resolution alone.
+  const best = candidates.find((video) => /\.mp4(\?|$)/i.test(video.url)) ?? candidates[0];
+  const ranked = best
+    ? [best, ...candidates.filter((video) => video !== best)]
+    : candidates;
+
+  const created = raw.created_at;
+  let time = Date.now();
+  if (typeof created === "string" && created) {
+    const parsed = Date.parse(created);
+    if (Number.isFinite(parsed)) time = parsed;
+  } else if (typeof created === "number" && Number.isFinite(created)) {
+    time = created > 1e12 ? Math.trunc(created) : Math.trunc(created * 1000);
+  }
+
+  const title = typeof raw.title === "string" ? raw.title.trim() : "";
+  const desc = typeof raw.description === "string" ? raw.description.slice(0, 2000) : "";
+  const fullName = typeof creator.full_name === "string" ? creator.full_name.trim() : "";
+  const username = typeof creator.username === "string" ? creator.username.trim() : "";
+  const authorId = creator.id != null ? String(creator.id) : username;
+
+  return {
+    note_id: id,
+    title: title || desc.slice(0, 60) || `${platform} ${id}`,
+    desc,
+    type: best ? "video" : "normal",
+    time,
+    ip_location: "",
+    like_count: toInt(stats.likes),
+    collect_count: toInt(stats.saves),
+    comment_count: toInt(stats.comments),
+    share_count: toInt(stats.shares),
+    tags: Array.isArray(raw.tags)
+      ? raw.tags.filter((tag): tag is string => typeof tag === "string").slice(0, 20)
+      : [],
+    images,
+    video: best
+      ? {
+          video_url: best.url,
+          video_urls: ranked.map((video) => video.url),
+          duration: best.duration || undefined,
+          width: best.width || undefined,
+          height: best.height || undefined,
+          referer: PLATFORM_HOME[platform],
+        }
+      : undefined,
+    author: fullName || username || undefined,
+    author_id: authorId || undefined,
+    source: "note_detail",
+    platform,
+  };
+}
+
+function mergeCapturedPost(data: SnifferData, entry: NoteEntry, tx: Tx): void {
+  const existing = data.notes[entry.note_id];
+  data.notes[entry.note_id] = {
+    ...existing,
+    ...entry,
+    title: entry.title || existing?.title || "",
+    desc: entry.desc || existing?.desc || "",
+    images: entry.images.length > 0 ? entry.images : existing?.images ?? [],
+    tags: entry.tags.length > 0 ? entry.tags : existing?.tags ?? [],
+    video: entry.video ?? existing?.video,
+    like_count: entry.like_count || existing?.like_count || 0,
+    collect_count: entry.collect_count || existing?.collect_count || 0,
+    comment_count: entry.comment_count || existing?.comment_count || 0,
+    share_count: entry.share_count || existing?.share_count || 0,
+    author: entry.author ?? existing?.author,
+    author_id: entry.author_id ?? existing?.author_id,
+    // Keep the first capture time so the panel order follows what the user opened, not refresh noise.
+    time: existing?.time ?? entry.time,
+  };
+  tx.note(entry.note_id);
 }
 
 /** Pinterest sends ISO dates on pins but epoch seconds on some comment resources. */

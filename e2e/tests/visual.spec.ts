@@ -154,7 +154,16 @@ const RUNTIME_INFO: DaemonRuntimeInfo = {
 const LIBRARY: LibraryListResponse = {
   items: LIBRARY_ITEMS,
   total: LIBRARY_ITEMS.length,
-  counts: { all: 3, xhs: 1, bilibili: 1, douyin: 1, pinterest: 0 },
+  counts: {
+    all: LIBRARY_ITEMS.length,
+    xhs: 1,
+    bilibili: 1,
+    douyin: 1,
+    pinterest: 0,
+    youtube: 0,
+    twitter: 0,
+    instagram: 0,
+  },
 };
 
 /** Covers come from a remote CDN, which must be replaced with deterministic content in visual

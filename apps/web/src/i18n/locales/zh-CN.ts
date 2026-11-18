@@ -241,6 +241,9 @@ export const zhCN: Dict = {
   'platform.bilibili': 'B站',
   'platform.douyin': '抖音',
   'platform.pinterest': 'Pinterest',
+  'platform.youtube': 'YouTube',
+  'platform.twitter': 'X',
+  'platform.instagram': 'Instagram',
   'platform.xhs': '小红书',
 
   // ── library: list ──────────────────────────────────────────────────────

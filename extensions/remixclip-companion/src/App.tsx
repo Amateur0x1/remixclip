@@ -41,7 +41,13 @@ const PLATFORMS: PlatformDef[] = [
   { key: "bilibili", label: "B站", icon: "📺", color: "#00a1d6", enabled: true },
   { key: "douyin", label: "抖音", icon: "🎵", color: "#111", enabled: true },
   { key: "pinterest", label: "Pinterest", icon: "📌", color: "#e60023", enabled: true },
+  { key: "youtube", label: "YouTube", icon: "▶️", color: "#ff0033", enabled: true },
+  { key: "twitter", label: "X", icon: "𝕏", color: "#0f1419", enabled: true },
+  { key: "instagram", label: "Instagram", icon: "📸", color: "#e1306c", enabled: true },
 ];
+
+/** Platforms that only ever capture the detail page the user opened, so one note is "the" capture. */
+const DETAIL_ONLY_PLATFORMS: PlatformKey[] = ["pinterest", "youtube", "twitter", "instagram"];
 
 /** Determine whether icon is an image path or an emoji */
 function isImageIcon(icon: string): boolean {
@@ -285,6 +291,17 @@ function App() {
     if (!data?.notes[openPin]) return;
     setSelected((prev) => (prev.size === 1 && prev.has(openPin) ? prev : new Set([openPin])));
   }, [platform, openPin, data]);
+
+  // Same contract for the other detail-only platforms: preselect whatever just landed, without
+  // hiding the older captures.
+  const lastTopNote = useRef<Partial<Record<PlatformKey, string>>>({});
+  useEffect(() => {
+    if (!DETAIL_ONLY_PLATFORMS.includes(platform)) return;
+    const top = exploreNotes[0]?.note_id;
+    if (!top || lastTopNote.current[platform] === top) return;
+    lastTopNote.current[platform] = top;
+    setSelected(new Set([top]));
+  }, [platform, exploreNotes]);
 
   /** Whether currently in creator selection mode (user tab not expanded) */
   const isUserListMode = tab === "user" && !expandedUser;
